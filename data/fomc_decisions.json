@@ -1,0 +1,23 @@
+{
+  "data_source": "Federal Reserve FOMC Statements & Minutes",
+  "last_updated": "2026-06-18",
+  "note": "每次 FOMC 议息会议后手动更新。数据来源: 美联储官网 https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+  "latest_decision": {
+    "date": "2026-06-18",
+    "rate_range": "4.25% - 4.50%",
+    "action": "维持利率不变",
+    "vote": "全票通过 (12-0)",
+    "summary": "美联储在2026年6月FOMC会议上决定维持联邦基金利率目标区间在4.25%-4.50%不变，符合市场预期。声明指出，经济活动继续以稳健步伐扩张，就业增长有所放缓但仍强劲，失业率保持在低位。通胀在过去一年有所缓解但仍处于高位。委员会重申其2%的通胀目标，并表示在获得更大信心认为通胀可持续向2%回落之前，不宜降低目标区间。",
+    "key_changes": "本次声明措辞与上次基本一致，未出现重大转向信号。删除了此前关于'风险大致平衡'的表述。",
+    "dot_plot_2026": "4.00% - 4.25% (中值预期降息2次共50bp)",
+    "dot_plot_2027": "3.50% - 3.75% (中值预期累计降息4次共100bp)",
+    "dot_plot_longer_run": "2.50% - 2.75%",
+    "balance_sheet": "继续按现有计划缩减资产负债表，每月缩减国债250亿美元、MBS 150亿美元。"
+  },
+  "upcoming_meetings": [
+    {"date": "2026-07-29", "note": "7月FOMC议息会议 (含经济预测摘要SEP)"},
+    {"date": "2026-09-16", "note": "9月FOMC议息会议"},
+    {"date": "2026-11-05", "note": "11月FOMC议息会议"},
+    {"date": "2026-12-16", "note": "12月FOMC议息会议 (含经济预测摘要SEP)"}
+  ]
+}

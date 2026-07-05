@@ -1,0 +1,56 @@
+# ============================================================
+# 轨道 B: 长周期宏观底牌 (Monthly Macro Report)
+# 触发: 每月1号 UTC 01:00 (北京时间 09:00)
+# ============================================================
+
+name: Monthly Macro Report - Gold Tech Fed
+
+on:
+  schedule:
+    # UTC 01:00 (每月1号) = 北京时间 09:00
+    - cron: "0 1 1 * *"
+
+  # 允许手动触发 (用于测试和补发)
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  monthly-report:
+    name: Fetch & Send Monthly Macro Report
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Monthly Macro Report
+        env:
+          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: python macro_monthly.py
+
+      - name: Upload Log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monthly-report-log
+          path: data/macro_monthly.log
+          retention-days: 14

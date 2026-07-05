@@ -1,0 +1,28 @@
+{
+  "data_source": "World Gold Council - Gold Demand Trends",
+  "last_updated": "2026-Q1",
+  "note": "此文件按季度更新。数据来源: WGC 官方 Gold Demand Trends 季度报告。央行购金为净买入量。",
+  "latest_quarter": "2026-Q1",
+  "global_central_bank_net_purchases": {
+    "value": 189.4,
+    "unit": "tonnes",
+    "quarter": "2026-Q1",
+    "yoy_change_pct": -15.3
+  },
+  "top_buyers": [
+    {"rank": 1, "country": "China", "purchases_tonnes": 47.2, "total_reserves_tonnes": 2350},
+    {"rank": 2, "country": "Poland", "purchases_tonnes": 28.7, "total_reserves_tonnes": 420},
+    {"rank": 3, "country": "India", "purchases_tonnes": 18.5, "total_reserves_tonnes": 870}
+  ],
+  "top_sellers": [
+    {"rank": 1, "country": "Kazakhstan", "sales_tonnes": 12.3},
+    {"rank": 2, "country": "Uzbekistan", "sales_tonnes": 8.1}
+  ],
+  "context": "2026年Q1全球央行购金步伐较2025年同期有所放缓，但仍处于历史高位。新兴市场央行去美元化趋势持续，推动黄金储备多元化。",
+  "historical_trend": [
+    {"year": "2025", "total_tonnes": 1045},
+    {"year": "2024", "total_tonnes": 1037},
+    {"year": "2023", "total_tonnes": 1037},
+    {"year": "2022", "total_tonnes": 1136}
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "data_source": "World Gold Council / S&P Global",
+  "last_updated": "2026-Q1",
+  "note": "此文件按季度手动更新。数据来源: WGC Gold Demand Trends 季度报告与 S&P Global 行业分析。",
+  "global_avg_aisc": {
+    "value": 1398,
+    "unit": "USD/oz",
+    "quarter": "2026-Q1",
+    "yoy_change_pct": 5.2
+  },
+  "historical": [
+    {"quarter": "2025-Q4", "aisc": 1362, "unit": "USD/oz"},
+    {"quarter": "2025-Q3", "aisc": 1343, "unit": "USD/oz"},
+    {"quarter": "2025-Q2", "aisc": 1328, "unit": "USD/oz"}
+  ],
+  "top_producers_margin": [
+    {"producer": "Newmont", "aisc": 1256, "ticker": "NEM"},
+    {"producer": "Barrick Gold", "aisc": 1312, "ticker": "GOLD"},
+    {"producer": "Agnico Eagle", "aisc": 1187, "ticker": "AEM"}
+  ]
+}

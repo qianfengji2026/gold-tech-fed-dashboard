@@ -1,0 +1,22 @@
+# ==========================================
+# 核心依赖
+# ==========================================
+yfinance>=0.2.40          # 美股/黄金/ETF 行情数据 (Yahoo Finance)
+pandas>=2.2.0             # 数据处理
+numpy>=1.26.0             # 数值计算
+requests>=2.31.0          # HTTP 请求 (备用)
+python-dotenv>=1.0.0      # 环境变量加载
+lxml>=5.1.0               # HTML/XML 解析 (备用)
+
+# --- 市场情绪 & 利率概率 ---
+fear-greed>=0.1.0         # CNN 恐慌与贪婪指数 (CNN 内部 API)
+cme-fedwatch>=0.1.0       # CME FedWatch 利率概率 (CME 结算价计算)
+
+# --- FRED 经济数据 (可选, 需 FRED API Key) ---
+fredapi>=0.5.2            # 美联储 FRED 数据库 (CPI/PCE/通胀预期)
+
+# --- 邮件发送 ---
+# smtplib 和 email 为 Python 标准库，无需额外安装
+
+# --- 开发/测试 (可选) ---
+pytest>=8.0.0
