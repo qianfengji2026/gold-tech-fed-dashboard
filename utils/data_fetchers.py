@@ -1,12 +1,13 @@
 """
 数据获取核心模块 - 黄金、科技股与美联储宏观数据抓取器
 
-涵盖五大维度:
+涵盖六大维度:
 1. 黄金价格 (GC=F)
 2. 通胀预期 (5Y Breakeven / CRB / CPI / PCE)
 3. 黄金开采成本 (AISC)
 4. 科技股行情与情绪 (QQQ / Mag7 / VXN / Fear&Greed)
 5. 美联储政策 (CME FedWatch / FOMC)
+6. 美元信用评估 (美债收益率 / DXY / 美联储资产负债表 / TIPS实际利率)
 
 每条数据源独立容错, 单项失败不影响整体输出。
 """
@@ -591,6 +592,386 @@ def fetch_fomc_summary() -> dict:
 
 
 # ============================================================
+# 6. 美元信用涨跌评估 (每日)
+# ============================================================
+
+def fetch_treasury_yields() -> dict:
+    """
+    获取美债收益率: 2年期、10年期、30年期及期限利差。
+
+    数据源: FRED (优先 fredapi, 降级 CSV) + yfinance 备用。
+    """
+    def _fetch():
+        import os
+        api_key = os.getenv("FRED_API_KEY", "")
+        result = {}
+
+        # FRED 系列
+        fred_series = {
+            "DGS2": "yield_2y",
+            "DGS10": "yield_10y",
+            "DGS30": "yield_30y",
+        }
+
+        use_fred = False
+        if api_key:
+            try:
+                from fredapi import Fred
+                fred = Fred(api_key=api_key)
+                for sid, key in fred_series.items():
+                    s = fred.get_series(sid)
+                    if not s.empty:
+                        s = s.dropna()
+                        latest = float(s.iloc[-1])
+                        prev = float(s.iloc[-2]) if len(s) > 1 else latest
+                        result[key] = {
+                            "value": latest,
+                            "prev": prev,
+                            "change": round(latest - prev, 3),
+                            "date": str(s.index[-1].date()),
+                            "source": "FRED",
+                        }
+                use_fred = True
+            except Exception as e:
+                logger.warning(f"FRED 国债收益率获取失败, 尝试 yfinance: {e}")
+
+        if not use_fred or not result:
+            # 降级: yfinance
+            yf_map = {"^IRX": "yield_2y", "^TNX": "yield_10y", "^TYX": "yield_30y"}
+            # ^IRX 是13周, 用 ^FVX (5年) 不对, 2Y 用 IEF 近似不行
+            # 实际: ^IRX=13周, ^FVX=5年, ^TNX=10年, ^TYX=30年
+            # 对于2年期, yfinance 没有 ^TWO, 但可以用 ETF "TU" 近似, 这里用 ^TNX + ^TYX 作主要
+            yf_map_actual = {"^TNX": "yield_10y", "^TYX": "yield_30y"}
+            for sym, key in yf_map_actual.items():
+                try:
+                    t = yf.Ticker(sym)
+                    hist = t.history(period="2d")
+                    if not hist.empty:
+                        current = float(hist["Close"].iloc[-1])
+                        prev = float(hist["Close"].iloc[-2]) if len(hist) > 1 else current
+                        result[key] = {
+                            "value": current,
+                            "prev": prev,
+                            "change": round(current - prev, 3),
+                            "source": "yfinance",
+                        }
+                except Exception as e:
+                    logger.warning(f"yfinance {sym} 获取失败: {e}")
+
+            # 2年期从 FRED CSV 降级
+            if "yield_2y" not in result:
+                try:
+                    df = pd.read_csv("https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS2&cosd=2025-01-01")
+                    df.columns = ["date", "value"]
+                    df["value"] = pd.to_numeric(df["value"], errors="coerce")
+                    df = df.dropna()
+                    if not df.empty:
+                        latest = float(df["value"].iloc[-1])
+                        prev = float(df["value"].iloc[-2]) if len(df) > 1 else latest
+                        result["yield_2y"] = {
+                            "value": latest,
+                            "prev": prev,
+                            "change": round(latest - prev, 3),
+                            "source": "FRED CSV",
+                        }
+                except Exception as e:
+                    logger.warning(f"FRED CSV DGS2 失败: {e}")
+
+        # 计算利差
+        y2 = result.get("yield_2y", {}).get("value")
+        y10 = result.get("yield_10y", {}).get("value")
+        y30 = result.get("yield_30y", {}).get("value")
+        if y2 is not None and y10 is not None:
+            result["spread_2y_10y"] = round(y10 - y2, 3)
+        if y10 is not None and y30 is not None:
+            result["spread_10y_30y"] = round(y30 - y10, 3)
+
+        return result if result else None
+
+    return _safe_fetch(_fetch, "美债收益率")
+
+
+def fetch_dxy_data() -> dict:
+    """
+    获取美元指数 (DXY) 行情。
+
+    数据源: yfinance (DX-Y.NYB)
+    """
+    def _fetch():
+        t = yf.Ticker("DX-Y.NYB")
+        hist = t.history(period="5d")
+        info = t.info or {}
+        if hist.empty:
+            return None
+        current = float(hist["Close"].iloc[-1])
+        prev_close = info.get("previousClose") or info.get("regularMarketPreviousClose")
+        if not prev_close and len(hist) >= 2:
+            prev_close = float(hist["Close"].iloc[-2])
+        change_pct = None
+        if prev_close:
+            change_pct = (current - float(prev_close)) / float(prev_close) * 100
+        return {
+            "value": current,
+            "prev_close": float(prev_close) if prev_close else None,
+            "change_pct": change_pct,
+        }
+
+    return _safe_fetch(_fetch, "美元指数DXY")
+
+
+def fetch_fed_balance_sheet() -> dict:
+    """
+    获取美联储资产负债表规模 (WALCL) 及周变化。
+
+    数据源: FRED WALCL (周更)
+    """
+    def _fetch():
+        import os
+        api_key = os.getenv("FRED_API_KEY", "")
+        result = {"total": None, "weekly_change": None, "source": "FRED"}
+
+        if api_key:
+            try:
+                from fredapi import Fred
+                fred = Fred(api_key=api_key)
+                s = fred.get_series("WALCL")
+                if not s.empty:
+                    s = s.dropna()
+                    latest = float(s.iloc[-1])
+                    prev = float(s.iloc[-2]) if len(s) > 1 else latest
+                    weekly_change = latest - prev
+                    result["total"] = latest
+                    result["weekly_change"] = weekly_change
+                    result["date"] = str(s.index[-1].date())
+                    result["total_bn"] = latest / 1000  # 十亿美元 (WALCL原始单位: 百万美元)
+                    result["weekly_change_bn"] = weekly_change / 1000
+            except Exception as e:
+                logger.warning(f"FRED WALCL 获取失败, 尝试 CSV: {e}")
+                try:
+                    df = pd.read_csv("https://fred.stlouisfed.org/graph/fredgraph.csv?id=WALCL&cosd=2025-01-01")
+                    df.columns = ["date", "value"]
+                    df["value"] = pd.to_numeric(df["value"], errors="coerce")
+                    df = df.dropna()
+                    if not df.empty:
+                        latest = float(df["value"].iloc[-1])
+                        prev = float(df["value"].iloc[-2]) if len(df) > 1 else latest
+                        result["total"] = latest
+                        result["weekly_change"] = latest - prev
+                        result["total_bn"] = latest / 1000  # 十亿美元 (WALCL原始单位: 百万美元)
+                        result["weekly_change_bn"] = (latest - prev) / 1000
+                        result["date"] = df["date"].iloc[-1]
+                        result["source"] = "FRED CSV"
+                except Exception as e2:
+                    logger.warning(f"FRED WALCL CSV 也失败: {e2}")
+        else:
+            try:
+                df = pd.read_csv("https://fred.stlouisfed.org/graph/fredgraph.csv?id=WALCL&cosd=2025-01-01")
+                df.columns = ["date", "value"]
+                df["value"] = pd.to_numeric(df["value"], errors="coerce")
+                df = df.dropna()
+                if not df.empty:
+                    latest = float(df["value"].iloc[-1])
+                    prev = float(df["value"].iloc[-2]) if len(df) > 1 else latest
+                    result["total"] = latest
+                    result["weekly_change"] = latest - prev
+                    result["total_bn"] = latest / 1000  # 十亿美元 (WALCL原始单位: 百万美元)
+                    result["weekly_change_bn"] = (latest - prev) / 1000
+                    result["date"] = df["date"].iloc[-1]
+                    result["source"] = "FRED CSV"
+            except Exception as e:
+                logger.warning(f"FRED WALCL CSV 失败: {e}")
+
+        return result if result.get("total") else None
+
+    return _safe_fetch(_fetch, "美联储资产负债表")
+
+
+def fetch_tips_spread() -> dict:
+    """
+    获取 10年期TIPS-通胀保值国债收益率 (DFII10), 用于衡量实际利率。
+
+    实际利率上升 = 美元信用走强信号之一。
+    数据源: FRED DFII10
+    """
+    def _fetch():
+        import os
+        api_key = os.getenv("FRED_API_KEY", "")
+        result = {"value": None, "prev": None, "change": None, "source": "FRED"}
+
+        if api_key:
+            try:
+                from fredapi import Fred
+                fred = Fred(api_key=api_key)
+                s = fred.get_series("DFII10")
+                if not s.empty:
+                    s = s.dropna()
+                    latest = float(s.iloc[-1])
+                    prev = float(s.iloc[-2]) if len(s) > 1 else latest
+                    result["value"] = latest
+                    result["prev"] = prev
+                    result["change"] = round(latest - prev, 3)
+                    result["date"] = str(s.index[-1].date())
+            except Exception as e:
+                logger.warning(f"FRED DFII10 获取失败: {e}")
+
+        if result.get("value") is None:
+            try:
+                df = pd.read_csv("https://fred.stlouisfed.org/graph/fredgraph.csv?id=DFII10&cosd=2025-01-01")
+                df.columns = ["date", "value"]
+                df["value"] = pd.to_numeric(df["value"], errors="coerce")
+                df = df.dropna()
+                if not df.empty:
+                    latest = float(df["value"].iloc[-1])
+                    prev = float(df["value"].iloc[-2]) if len(df) > 1 else latest
+                    result["value"] = latest
+                    result["prev"] = prev
+                    result["change"] = round(latest - prev, 3)
+                    result["date"] = df["date"].iloc[-1]
+                    result["source"] = "FRED CSV"
+            except Exception as e:
+                logger.warning(f"FRED DFII10 CSV 失败: {e}")
+
+        return result if result.get("value") is not None else None
+
+    return _safe_fetch(_fetch, "TIPS实际利率")
+
+
+def analyze_dollar_credit(
+    treasury: dict,
+    dxy: dict,
+    fed_bs: dict,
+    tips: dict,
+    breakeven: dict,
+) -> str:
+    """
+    美元信用综合研判引擎。
+
+    多维信号:
+    - 美债收益率走势 (10Y 飙升 = 信用承压)
+    - 2Y-10Y 利差 (倒挂 = 衰退信号, 信用受损)
+    - 美元指数 DXY (走强 = 信用暂时坚挺)
+    - 美联储缩表进度 (缩表 = 信用收缩)
+    - 实际利率 TIPS (上升 = 美元走强信号)
+    - 通胀预期 (飙升 = 美元购买力受损)
+
+    输出: 一句话研判 + 信用评级(AAA/AA/BBB等)
+    """
+    signals = []
+    score = 0  # 正=信用走强, 负=信用走弱
+
+    # 1. 美债10Y收益率变化
+    y10 = treasury.get("yield_10y") if treasury else None
+    if y10:
+        change = y10.get("change")
+        val = y10.get("value")
+        if change is not None:
+            if change > 0.05:
+                signals.append(f"10Y收益率飙升{change:+.3f}%至{val:.3f}%, 债价下跌、偿债成本上行")
+                score -= 2
+            elif change > 0.02:
+                signals.append(f"10Y收益率小幅上行{change:+.3f}%至{val:.3f}%")
+                score -= 1
+            elif change < -0.05:
+                signals.append(f"10Y收益率回落{change:+.3f}%至{val:.3f}%, 债价回暖")
+                score += 1
+            else:
+                signals.append(f"10Y收益率{val:.3f}%, 基本持稳")
+
+    # 2. 2Y-10Y 期限利差
+    spread = treasury.get("spread_2y_10y") if treasury else None
+    if spread is not None:
+        if spread < 0:
+            signals.append(f"2Y-10Y利差{spread:+.3f}%倒挂, 衰退预期升温、美元长期信用受损")
+            score -= 3
+        elif spread < 0.2:
+            signals.append(f"2Y-10Y利差{spread:+.3f}%, 曲线平坦化, 增长隐忧")
+            score -= 1
+        elif spread > 0.5:
+            signals.append(f"2Y-10Y利差{spread:+.3f}%, 曲线陡峭, 经济扩张预期")
+            score += 2
+        else:
+            signals.append(f"2Y-10Y利差{spread:+.3f}%, 曲线形态正常")
+
+    # 3. 美元指数 DXY
+    dxy_pct = dxy.get("change_pct") if dxy else None
+    dxy_val = dxy.get("value") if dxy else None
+    if dxy_pct is not None:
+        if dxy_pct > 0.5:
+            signals.append(f"美元指数{dxy_val:.2f}(+{dxy_pct:.2f}%), 避险买盘推升")
+            score += 2
+        elif dxy_pct > 0:
+            signals.append(f"美元指数{dxy_val:.2f}(+{dxy_pct:.2f}%), 温和走强")
+            score += 1
+        elif dxy_pct < -0.5:
+            signals.append(f"美元指数{dxy_val:.2f}({dxy_pct:.2f}%), 美元承压贬值")
+            score -= 2
+        else:
+            signals.append(f"美元指数{dxy_val:.2f}({dxy_pct:.2f}%), 区间震荡")
+
+    # 4. 美联储资产负债表
+    if fed_bs and fed_bs.get("weekly_change_bn") is not None:
+        wc = fed_bs["weekly_change_bn"]
+        total = fed_bs.get("total_bn")
+        if wc < -5:
+            signals.append(f"美联储缩表{wc:+.1f}B(总规模{total:.0f}B), 流动性持续收缩")
+            score -= 1
+        elif wc > 5:
+            signals.append(f"美联储扩表{wc:+.1f}B(总规模{total:.0f}B), 释放流动性")
+            score += 1
+        else:
+            signals.append(f"美联储资产负债表规模{total:.0f}B, 基本持平")
+
+    # 5. 实际利率 TIPS
+    if tips and tips.get("value") is not None:
+        real_rate = tips["value"]
+        if real_rate > 1.5:
+            signals.append(f"10Y实际利率{real_rate:.2f}%, 高实际利率支撑美元")
+            score += 2
+        elif real_rate > 0.5:
+            signals.append(f"10Y实际利率{real_rate:.2f}%, 美元购买力尚可")
+            score += 1
+        elif real_rate < 0:
+            signals.append(f"10Y实际利率{real_rate:.2f}%, 实际利率为负, 美元购买力受损")
+            score -= 2
+        else:
+            signals.append(f"10Y实际利率{real_rate:.2f}%, 偏低")
+
+    # 6. 通胀预期
+    be_val = breakeven.get("value") if breakeven else None
+    if be_val is not None:
+        if be_val > 3.0:
+            signals.append(f"5Y通胀预期{be_val:.2f}%, 远超2%目标, 货币信用侵蚀加速")
+            score -= 2
+        elif be_val < 1.5:
+            signals.append(f"5Y通胀预期{be_val:.2f}%, 低于目标, 美元信用暂时稳固")
+            score += 1
+
+    # 综合评级
+    if score >= 5:
+        rating = "AAA"
+        verdict = "美元信用强势走稳"
+    elif score >= 2:
+        rating = "AA"
+        verdict = "美元信用偏强运行"
+    elif score >= 0:
+        rating = "A"
+        verdict = "美元信用中性持平"
+    elif score >= -2:
+        rating = "BBB"
+        verdict = "美元信用边际承压"
+    elif score >= -5:
+        rating = "BB"
+        verdict = "美元信用走弱"
+    else:
+        rating = "B"
+        verdict = "美元信用显著恶化"
+
+    detail = " | ".join(signals) if signals else "数据维度不足, 请检查数据源"
+
+    return f"{verdict} | 信用评级: {rating} | {detail}"
+
+
+# ============================================================
 # 批量获取主入口
 # ============================================================
 
@@ -608,9 +989,20 @@ def fetch_daily_bundle() -> dict:
     bundle["fear_greed"] = fetch_cnn_fear_greed()
     bundle["fedwatch"] = fetch_cme_fedwatch()
 
+    # 美元信用评估维度
+    bundle["treasury"] = fetch_treasury_yields()
+    bundle["dxy"] = fetch_dxy_data()
+    bundle["fed_bs"] = fetch_fed_balance_sheet()
+    bundle["tips"] = fetch_tips_spread()
+
     # 情绪研判
     bundle["tech_sentiment"] = analyze_tech_sentiment(
         bundle["mag7"], bundle["qqq"], bundle["vxn"], bundle["fear_greed"]
+    )
+
+    # 美元信用综合研判
+    bundle["dollar_credit"] = analyze_dollar_credit(
+        bundle["treasury"], bundle["dxy"], bundle["fed_bs"], bundle["tips"], bundle["breakeven"]
     )
 
     bundle["fetch_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC+8")
@@ -627,6 +1019,15 @@ def fetch_monthly_bundle() -> dict:
     bundle["fomc"] = fetch_fomc_summary()
     bundle["gold"] = fetch_gold_price()  # 当月金价参考
     bundle["fedwatch"] = fetch_cme_fedwatch()  # 当前利率概率
+
+    # 美元信用评估维度 (月度报告也纳入)
+    bundle["treasury"] = fetch_treasury_yields()
+    bundle["dxy"] = fetch_dxy_data()
+    bundle["fed_bs"] = fetch_fed_balance_sheet()
+    bundle["tips"] = fetch_tips_spread()
+    bundle["dollar_credit"] = analyze_dollar_credit(
+        bundle["treasury"], bundle["dxy"], bundle["fed_bs"], bundle["tips"], bundle["breakeven"]
+    )
 
     bundle["fetch_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC+8")
     return bundle

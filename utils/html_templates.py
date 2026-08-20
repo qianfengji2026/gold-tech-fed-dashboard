@@ -168,8 +168,8 @@ def render_daily_html(data: dict) -> str:
 <div class="container">
 
 <div class="header">
-    <h1>每日黄金通胀预期、美股科技股情绪与美联储降息概率看板</h1>
-    <div class="subtitle">Daily Gold · Inflation · Tech Sentiment · Fed Policy Dashboard</div>
+    <h1>每日黄金通胀预期、美股科技股情绪、美联储降息概率与美元信用评估看板</h1>
+    <div class="subtitle">Daily Gold · Inflation · Tech Sentiment · Fed Policy · Dollar Credit</div>
     <div class="date-badge">{today}</div>
 </div>
 """)
@@ -340,6 +340,136 @@ def render_daily_html(data: dict) -> str:
 """)
     else:
         parts.append('<p style="color:#888;">该项数据源正在维护中</p>')
+
+    parts.append("</div>")
+
+    # --- 第五部分: 美元信用涨跌评估 ---
+    treasury = data.get("treasury")
+    dxy = data.get("dxy")
+    fed_bs = data.get("fed_bs")
+    tips = data.get("tips")
+    dollar_credit = data.get("dollar_credit", "")
+
+    parts.append("""
+<div class="section">
+    <div class="section-title">V. 美元信用涨跌评估</div>
+""")
+
+    # 信用研判结论
+    dc_label = "待评估"
+    dc_cls = "sentiment-neutral"
+    if dollar_credit:
+        if "强势走稳" in dollar_credit or "AAA" in dollar_credit:
+            dc_label = "AAA · 信用强势走稳"
+            dc_cls = "sentiment-greed"
+        elif "偏强运行" in dollar_credit or "信用评级: AA" in dollar_credit:
+            dc_label = "AA · 信用偏强运行"
+            dc_cls = "sentiment-greed"
+        elif "中性持平" in dollar_credit or "信用评级: A" in dollar_credit:
+            dc_label = "A · 信用中性持平"
+            dc_cls = "sentiment-neutral"
+        elif "边际承压" in dollar_credit or "BBB" in dollar_credit:
+            dc_label = "BBB · 信用边际承压"
+            dc_cls = "sentiment-fear"
+        elif "信用走弱" in dollar_credit or "信用评级: BB" in dollar_credit:
+            dc_label = "BB · 信用走弱"
+            dc_cls = "sentiment-fear"
+        elif "显著恶化" in dollar_credit or "信用评级: B" in dollar_credit:
+            dc_label = "B · 信用显著恶化"
+            dc_cls = "sentiment-panic"
+
+    parts.append(f"""
+    <div style="text-align:center; padding: 12px 0;">
+        <span class="sentiment-badge {dc_cls}" style="font-size:15px; padding:8px 20px;">{dc_label}</span>
+    </div>
+    <p style="text-align:center; color:#666; font-size:12px; margin-top:6px;">{dollar_credit}</p>
+""")
+
+    # 美债收益率卡片
+    y2 = treasury.get("yield_2y") if treasury else None
+    y10 = treasury.get("yield_10y") if treasury else None
+    y30 = treasury.get("yield_30y") if treasury else None
+    spread_2_10 = treasury.get("spread_2y_10y") if treasury else None
+
+    parts.append('<div class="metric-row" style="margin-top:16px;">')
+
+    if y2:
+        parts.append(f"""
+        <div class="metric-card">
+            <div class="metric-label">2Y 国债收益率</div>
+            <div class="metric-value" style="font-size:18px;">{y2.get('value', 'N/A'):.3f}%</div>
+            <div class="metric-change {_change_class(y2.get('change'))}">{_fmt_pct(y2.get('change'), 3)}</div>
+        </div>
+""")
+
+    if y10:
+        parts.append(f"""
+        <div class="metric-card">
+            <div class="metric-label">10Y 国债收益率</div>
+            <div class="metric-value" style="font-size:18px;">{y10.get('value', 'N/A'):.3f}%</div>
+            <div class="metric-change {_change_class(y10.get('change'))}">{_fmt_pct(y10.get('change'), 3)}</div>
+        </div>
+""")
+
+    if y30:
+        parts.append(f"""
+        <div class="metric-card">
+            <div class="metric-label">30Y 国债收益率</div>
+            <div class="metric-value" style="font-size:18px;">{y30.get('value', 'N/A'):.3f}%</div>
+            <div class="metric-change {_change_class(y30.get('change'))}">{_fmt_pct(y30.get('change'), 3)}</div>
+        </div>
+""")
+
+    parts.append("</div>")
+
+    # 利差 + DXY + 实际利率
+    parts.append('<div class="metric-row">')
+
+    if spread_2_10 is not None:
+        parts.append(f"""
+        <div class="metric-card">
+            <div class="metric-label">2Y-10Y 期限利差</div>
+            <div class="metric-value" style="font-size:18px; color:{'#E53935' if spread_2_10 >= 0 else '#43A047'};">{spread_2_10:+.3f}%</div>
+            <div class="metric-change">{'倒挂' if spread_2_10 < 0 else '正常'}</div>
+        </div>
+""")
+
+    if dxy:
+        dxy_val = dxy.get("value")
+        dxy_pct = dxy.get("change_pct")
+        parts.append(f"""
+        <div class="metric-card">
+            <div class="metric-label">美元指数 (DXY)</div>
+            <div class="metric-value" style="font-size:18px;">{dxy_val:.2f if dxy_val else 'N/A'}</div>
+            <div class="metric-change {_change_class(dxy_pct)}">{_fmt_pct(dxy_pct)}</div>
+        </div>
+""")
+
+    if tips and tips.get("value") is not None:
+        real_rate = tips["value"]
+        parts.append(f"""
+        <div class="metric-card">
+            <div class="metric-label">10Y 实际利率 (TIPS)</div>
+            <div class="metric-value" style="font-size:18px; color:{'#E53935' if real_rate > 0 else '#43A047'};">{real_rate:.3f}%</div>
+            <div class="metric-change">{_fmt_pct(tips.get('change'), 3)}</div>
+        </div>
+""")
+
+    parts.append("</div>")
+
+    # 美联储资产负债表
+    if fed_bs and fed_bs.get("total_bn") is not None:
+        total_bn = fed_bs["total_bn"]
+        wc_bn = fed_bs.get("weekly_change_bn", 0)
+        parts.append(f"""
+    <div class="metric-row">
+        <div class="metric-card" style="min-width:100%;">
+            <div class="metric-label">美联储资产负债表规模 ({fed_bs.get('date', 'N/A')})</div>
+            <div class="metric-value" style="font-size:18px;">${total_bn:,.0f}B</div>
+            <div class="metric-change {_change_class(wc_bn)}">周变化: {wc_bn:+.1f}B</div>
+        </div>
+    </div>
+""")
 
     parts.append("</div>")
 

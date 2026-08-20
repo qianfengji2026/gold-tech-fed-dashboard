@@ -80,7 +80,7 @@ def main():
     today_str = datetime.now().strftime("%Y-%m-%d")
     weekday_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
     weekday_cn = weekday_names[datetime.now().weekday()]
-    subject = f"【每日黄金通胀预期、美股科技股情绪与美联储降息概率看板】{today_str} {weekday_cn}"
+    subject = f"【每日黄金通胀预期、美股科技股情绪、美联储降息概率与美元信用评估看板】{today_str} {weekday_cn}"
 
     # --- 渲染 HTML ---
     logger.info("渲染 HTML 邮件...")
