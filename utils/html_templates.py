@@ -168,13 +168,17 @@ def render_daily_html(data: dict) -> str:
 <div class="container">
 
 <div class="header">
-    <h1>每日黄金通胀预期、美股科技股情绪、美联储降息概率与美元信用评估看板</h1>
-    <div class="subtitle">Daily Gold · Inflation · Tech Sentiment · Fed Policy · Dollar Credit</div>
+    <h1>每日黄金通胀预期、美股科技股情绪、美联储降息概率、美元信用评估与贵金属持仓看板</h1>
+    <div class="subtitle">Daily Gold · Inflation · Tech Sentiment · Fed Policy · Dollar Credit · Precious Metals</div>
     <div class="date-badge">{today}</div>
 </div>
 """)
 
     # --- 第一部分: 黄金与通胀 ---
+    cpi_pce = data.get("cpi_pce", {})
+    cpi = cpi_pce.get("cpi") if cpi_pce else None
+    core_pce = cpi_pce.get("core_pce") if cpi_pce else None
+
     parts.append("""
 <div class="section">
     <div class="section-title">I. 黄金与通胀预期</div>
@@ -200,6 +204,18 @@ def render_daily_html(data: dict) -> str:
             <div class="metric-change {crb_cls}">{crb_change}</div>
         </div>
     </div>
+    <div class="metric-row">
+        <div class="metric-card">
+            <div class="metric-label">CPI ({cpi_date})</div>
+            <div class="metric-value kpi-big">{cpi_value}</div>
+            <div class="metric-change">环比 {cpi_mom} | 同比 {cpi_yoy}</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">核心 PCE ({pce_date})</div>
+            <div class="metric-value kpi-big">{pce_value}</div>
+            <div class="metric-change">环比 {pce_mom} | 同比 {pce_yoy}</div>
+        </div>
+    </div>
 </div>
 """.format(
         gold_futures_price=_fmt_price(gold_futures.get("price")),
@@ -214,6 +230,14 @@ def render_daily_html(data: dict) -> str:
         crb_value=_fmt_price(crb.get("price")) if crb else "N/A",
         crb_cls=_change_class(crb.get("change_pct") if crb else None),
         crb_change=_fmt_pct(crb.get("change_pct")) if crb else "N/A",
+        cpi_date=cpi.get("date", "") if cpi else "N/A",
+        cpi_value=f"{cpi.get('value', 'N/A'):,.1f}" if cpi else "N/A",
+        cpi_mom=_fmt_pct(cpi.get("mom_pct"), 3) if cpi else "N/A",
+        cpi_yoy=_fmt_pct(cpi.get("yoy_pct"), 1) if cpi else "N/A",
+        pce_date=core_pce.get("date", "") if core_pce else "N/A",
+        pce_value=f"{core_pce.get('value', 'N/A'):,.1f}" if core_pce else "N/A",
+        pce_mom=_fmt_pct(core_pce.get("mom_pct"), 3) if core_pce else "N/A",
+        pce_yoy=_fmt_pct(core_pce.get("yoy_pct"), 1) if core_pce else "N/A",
     ))
 
     # --- 第二部分: 科技股行情 ---
@@ -471,6 +495,202 @@ def render_daily_html(data: dict) -> str:
     </div>
 """)
 
+    parts.append("</div>")
+
+    # --- 第六部分: 美元指数独立分析 ---
+    dxy_analysis = data.get("dxy_analysis")
+
+    parts.append("""
+<div class="section">
+    <div class="section-title">VI. 美元指数独立分析</div>
+""")
+    if dxy_analysis:
+        dxy_val = dxy_analysis.get("value")
+        dxy_pct = dxy_analysis.get("change_pct")
+        dxy_trend = dxy_analysis.get("trend_direction", "")
+        dxy_trend_pct = dxy_analysis.get("trend_5d_pct")
+        dxy_interp = dxy_analysis.get("interpretation", "")
+        # 趋势箭头
+        trend_arrow = "→"
+        if dxy_trend_pct is not None:
+            if dxy_trend_pct > 0.5:
+                trend_arrow = "↑"
+            elif dxy_trend_pct < -0.5:
+                trend_arrow = "↓"
+        parts.append(f"""
+    <div class="metric-row">
+        <div class="metric-card">
+            <div class="metric-label">最新 DXY 指数</div>
+            <div class="metric-value kpi-big">{dxy_val:.2f if dxy_val else 'N/A'}</div>
+            <div class="metric-change {_change_class(dxy_pct)}">{_fmt_pct(dxy_pct)}</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">5 日趋势</div>
+            <div class="metric-value kpi-big">{trend_arrow}</div>
+            <div class="metric-change">{dxy_trend} ({_fmt_pct(dxy_trend_pct)})</div>
+        </div>
+    </div>
+    <p style="text-align:center; color:#666; font-size:13px; margin-top:8px;">{dxy_interp}</p>
+""")
+    else:
+        parts.append('<p style="color:#888;">该项数据源正在维护中</p>')
+    parts.append("</div>")
+
+    # --- 第七部分: 金银比 (Gold/Silver Ratio) ---
+    gsr = data.get("gold_silver_ratio")
+
+    parts.append("""
+<div class="section">
+    <div class="section-title">VII. 金银比 (Gold/Silver Ratio)</div>
+""")
+    if gsr and gsr.get("ratio"):
+        ratio = gsr["ratio"]
+        gold_p = gsr.get("gold_price")
+        silver_p = gsr.get("silver_price")
+        avg20 = gsr.get("historical_avg_20yr", 60)
+        avg50 = gsr.get("historical_avg_50yr", 55)
+        interp = gsr.get("interpretation", "")
+
+        # 基于比值的颜色: 显著偏离均值时高亮
+        deviation = (ratio - avg20) / avg20 * 100
+        ratio_cls = "up" if deviation > 5 else ("down" if deviation < -5 else "neutral")
+
+        parts.append(f"""
+    <div class="metric-row">
+        <div class="metric-card" style="min-width:100%;">
+            <div class="metric-label">金银比</div>
+            <div class="metric-value kpi-big" style="color:{'#E53935' if ratio > avg20 else '#43A047'};">{ratio:.1f}</div>
+            <div class="metric-change {ratio_cls}">金价 ${gold_p:,.0f} | 银价 ${silver_p:,.2f}</div>
+        </div>
+    </div>
+    <div class="metric-row">
+        <div class="metric-card">
+            <div class="metric-label">20 年均值</div>
+            <div class="metric-value" style="font-size:18px;">{avg20}</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">50 年均值</div>
+            <div class="metric-value" style="font-size:18px;">{avg50}</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">偏离 20 年均值</div>
+            <div class="metric-value {ratio_cls}" style="font-size:18px;">{deviation:+.1f}%</div>
+        </div>
+    </div>
+    <p style="text-align:center; color:#666; font-size:13px; margin-top:8px;">{interp}</p>
+""")
+    else:
+        parts.append('<p style="color:#888;">该项数据源正在维护中</p>')
+    parts.append("</div>")
+
+    # --- 第八部分: COMEX COT 报告解读 ---
+    cot = data.get("cot")
+
+    parts.append("""
+<div class="section">
+    <div class="section-title">VIII. COMEX 黄金/白银期货非商业持仓 (COT 报告)</div>
+""")
+    if cot:
+        gold_cot = cot.get("gold", {})
+        silver_cot = cot.get("silver", {})
+
+        # 黄金 COT
+        if gold_cot:
+            gold_net = gold_cot.get("net_position")
+            gold_sentiment = gold_cot.get("sentiment", "中性")
+            gold_oi = gold_cot.get("open_interest")
+            gold_long = gold_cot.get("noncomm_long")
+            gold_short = gold_cot.get("noncomm_short")
+            gold_sent_cls = _sentiment_class(gold_sentiment)
+            gold_sent_label = _sentiment_label(gold_sentiment)
+
+            parts.append(f"""
+    <p style="font-weight:700; margin-bottom:8px;">黄金 (COMEX, Code-088691)</p>
+    <div class="metric-row">
+        <div class="metric-card">
+            <div class="metric-label">非商业净多仓</div>
+            <div class="metric-value kpi-big">{gold_net:,}</div>
+            <div class="metric-change">多头: {gold_long:,} | 空头: {gold_short:,}</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">未平仓合约 (OI)</div>
+            <div class="metric-value kpi-big">{gold_oi:,}</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">持仓情绪</div>
+            <div style="margin-top:8px;"><span class="sentiment-badge {gold_sent_cls}">{gold_sent_label}</span></div>
+        </div>
+    </div>
+""")
+        else:
+            parts.append('<p style="color:#888;">黄金 COT 数据暂不可用</p>')
+
+        # 白银 COT
+        if silver_cot:
+            silver_net = silver_cot.get("net_position")
+            silver_sentiment = silver_cot.get("sentiment", "中性")
+            silver_oi = silver_cot.get("open_interest")
+            silver_long = silver_cot.get("noncomm_long")
+            silver_short = silver_cot.get("noncomm_short")
+            silver_sent_cls = _sentiment_class(silver_sentiment)
+            silver_sent_label = _sentiment_label(silver_sentiment)
+
+            parts.append(f"""
+    <p style="font-weight:700; margin-top:16px; margin-bottom:8px;">白银 (COMEX, Code-084691)</p>
+    <div class="metric-row">
+        <div class="metric-card">
+            <div class="metric-label">非商业净多仓</div>
+            <div class="metric-value kpi-big">{silver_net:,}</div>
+            <div class="metric-change">多头: {silver_long:,} | 空头: {silver_short:,}</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">未平仓合约 (OI)</div>
+            <div class="metric-value kpi-big">{silver_oi:,}</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">持仓情绪</div>
+            <div style="margin-top:8px;"><span class="sentiment-badge {silver_sent_cls}">{silver_sent_label}</span></div>
+        </div>
+    </div>
+""")
+        else:
+            parts.append('<p style="color:#888;">白银 COT 数据暂不可用</p>')
+    else:
+        parts.append('<p style="color:#888;">该项数据源正在维护中</p>')
+    parts.append("</div>")
+
+    # --- 第九部分: SPDR 黄金 ETF 持仓 ---
+    spdr = data.get("spdr")
+
+    parts.append("""
+<div class="section">
+    <div class="section-title">IX. 全球最大黄金 ETF (SPDR) 持仓变化</div>
+""")
+    if spdr:
+        holdings = spdr.get("holdings_tonnes")
+        change = spdr.get("change_tonnes")
+        nav = spdr.get("nav")
+        source = spdr.get("source", "未知")
+
+        parts.append(f"""
+    <div class="metric-row">
+        <div class="metric-card">
+            <div class="metric-label">SPDR 黄金持仓量</div>
+            <div class="metric-value kpi-big">{holdings:,.2f}<span style="font-size:14px;"> 吨</span></div>
+            <div class="metric-change {_change_class(change) if change else 'neutral'}">{'%+.2f 吨' % change if change else 'N/A'}</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">总资产净值 (NAV)</div>
+            <div class="metric-value kpi-big">${nav:,.1f}B</div>
+            <div class="metric-change">数据来源: {source}</div>
+        </div>
+    </div>
+    <p style="text-align:center; color:#666; font-size:12px; margin-top:8px;">
+        SPDR 持仓变化反映全球最大黄金 ETF 的资金流向, 是衡量黄金投资需求的重要指标。
+    </p>
+""")
+    else:
+        parts.append('<p style="color:#888;">该项数据源正在维护中</p>')
     parts.append("</div>")
 
     # --- 页脚 ---

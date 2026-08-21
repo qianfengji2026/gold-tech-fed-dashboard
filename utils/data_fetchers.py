@@ -1,13 +1,14 @@
 """
 数据获取核心模块 - 黄金、科技股与美联储宏观数据抓取器
 
-涵盖六大维度:
-1. 黄金价格 (GC=F)
-2. 通胀预期 (5Y Breakeven / CRB / CPI / PCE)
-3. 黄金开采成本 (AISC)
-4. 科技股行情与情绪 (QQQ / Mag7 / VXN / Fear&Greed)
-5. 美联储政策 (CME FedWatch / FOMC)
-6. 美元信用评估 (美债收益率 / DXY / 美联储资产负债表 / TIPS实际利率)
+涵盖七大维度:
+1. 黄金价格 (GC=F) + 通胀预期 (5Y Breakeven / CRB / CPI / PCE)
+2. 黄金开采成本 (AISC) + 央行购金 (WGC)
+3. 科技股行情与情绪 (QQQ / Mag7 / VXN / Fear&Greed)
+4. 美联储政策 (CME FedWatch / FOMC)
+5. 美元信用评估 (美债收益率 / DXY / 美联储资产负债表 / TIPS实际利率)
+6. 贵金属持仓 (COT 报告 / SPDR 黄金 ETF 持仓)
+7. 衍生指标 (金银比 / 美元指数独立分析)
 
 每条数据源独立容错, 单项失败不影响整体输出。
 """
@@ -143,6 +144,43 @@ def fetch_gold_price() -> dict:
         return result
 
     return _safe_fetch(_fetch, "黄金价格", {})
+
+
+# ============================================================
+# 1.5 白银价格 (用于金银比计算)
+# ============================================================
+
+def fetch_silver_price() -> dict:
+    """获取白银期货价格 (SI=F)。"""
+    def _fetch():
+        # 尝试多个可能的 ticker
+        ticker_candidates = ["SI=F", "SIL=F"]
+        for sym in ticker_candidates:
+            try:
+                t = yf.Ticker(sym)
+                hist = t.history(period="2d")
+                if hist.empty:
+                    continue
+                info = t.info if hasattr(t, "info") else {}
+                prev_close = info.get("previousClose") or info.get("regularMarketPreviousClose")
+                current = float(hist["Close"].iloc[-1])
+                if not prev_close and len(hist) >= 2:
+                    prev_close = float(hist["Close"].iloc[-2])
+                change_pct = None
+                if current and prev_close:
+                    change_pct = (current - float(prev_close)) / float(prev_close) * 100
+                return {
+                    "price": current,
+                    "prev_close": float(prev_close) if prev_close else None,
+                    "change_pct": change_pct,
+                    "ticker": sym,
+                    "name": "白银期货",
+                }
+            except Exception as e:
+                logger.warning(f"白银数据 [{sym}] 抓取失败: {e}")
+                continue
+        return None
+    return _safe_fetch(_fetch, "白银价格")
 
 
 # ============================================================
@@ -972,6 +1010,361 @@ def analyze_dollar_credit(
 
 
 # ============================================================
+# 7. 金银比 (Gold/Silver Ratio)
+# ============================================================
+
+def fetch_gold_silver_ratio() -> dict:
+    """
+    计算金银比 (Gold/Silver Ratio)。
+
+    金银比 = 黄金价格 / 白银价格
+    历史参照:
+    - 20年均值: ~60
+    - 50年均值: ~55
+    - 极端高位 (80-90): 白银相对低估, 通常预示白银补涨
+    - 极端低位 (40-50): 白银相对高估, 通常预示白银回调
+    """
+    def _fetch():
+        gold = fetch_gold_price()
+        silver = fetch_silver_price()
+
+        gold_futures = gold.get("GC=F", {}) if gold else {}
+        gold_price = gold_futures.get("price")
+        silver_price = silver.get("price") if silver else None
+
+        if not gold_price or not silver_price or silver_price == 0:
+            return None
+
+        ratio = gold_price / silver_price
+
+        # 历史背景解读
+        context_parts = []
+        if ratio > 80:
+            context_parts.append("金银比处于极端高位(>80), 白银相对黄金被严重低估, 历史上往往预示白银补涨行情")
+        elif ratio > 70:
+            context_parts.append("金银比偏高(70-80), 白银相对低估, 关注白银补涨机会")
+        elif ratio > 60:
+            context_parts.append("金银比略高于20年均值(~60), 白银估值中性偏低估")
+        elif ratio < 50:
+            context_parts.append("金银比低于50, 白银相对黄金表现强势, 注意白银回调风险")
+        elif ratio < 40:
+            context_parts.append("金银比处于极端低位(<40), 白银相对黄金被严重高估, 历史上往往预示白银回调")
+        else:
+            context_parts.append(f"金银比在{ratio:.1f}附近, 处于20年均值(~60)区间, 两者估值相对均衡")
+
+        context_parts.append(f"(20年均值约60, 50年均值约55)")
+
+        return {
+            "ratio": round(ratio, 2),
+            "gold_price": gold_price,
+            "silver_price": silver_price,
+            "interpretation": " | ".join(context_parts),
+            "historical_avg_20yr": 60,
+            "historical_avg_50yr": 55,
+        }
+
+    return _safe_fetch(_fetch, "金银比")
+
+
+# ============================================================
+# 8. 美元指数独立分析 (DXY 独立展示)
+# ============================================================
+
+def fetch_dxy_analysis() -> dict:
+    """
+    美元指数独立分析模块。
+
+    在基本 DXY 行情基础上, 增加 5 日趋势分析和综合解读。
+    """
+    def _fetch():
+        t = yf.Ticker("DX-Y.NYB")
+        hist = t.history(period="5d")
+        info = t.info or {}
+        if hist.empty:
+            return None
+
+        current = float(hist["Close"].iloc[-1])
+        prev_close = info.get("previousClose") or info.get("regularMarketPreviousClose")
+        if not prev_close and len(hist) >= 2:
+            prev_close = float(hist["Close"].iloc[-2])
+        change_pct = None
+        if prev_close:
+            change_pct = (current - float(prev_close)) / float(prev_close) * 100
+
+        # 5日趋势
+        closes = [float(c) for c in hist["Close"].values]
+        if len(closes) >= 2:
+            trend_5d_pct = (closes[-1] - closes[0]) / closes[0] * 100
+        else:
+            trend_5d_pct = 0
+
+        # 趋势方向
+        if trend_5d_pct > 1:
+            trend_direction = "强势上行"
+        elif trend_5d_pct > 0.3:
+            trend_direction = "温和走强"
+        elif trend_5d_pct < -1:
+            trend_direction = "显著下跌"
+        elif trend_5d_pct < -0.3:
+            trend_direction = "温和走弱"
+        else:
+            trend_direction = "区间震荡"
+
+        # 综合解读
+        if current > 105:
+            interpretation = f"美元指数{current:.2f}, 处于强势区间(>105), 全球避险需求或美联储鹰派预期支撑"
+        elif current > 100:
+            interpretation = f"美元指数{current:.2f}, 处于中性偏强区间(100-105), 整体走势稳健"
+        elif current > 95:
+            interpretation = f"美元指数{current:.2f}, 处于中性偏弱区间(95-100), 美元承压但未破位"
+        else:
+            interpretation = f"美元指数{current:.2f}, 处于弱势区间(<95), 美元购买力显著下滑"
+
+        return {
+            "value": current,
+            "prev_close": float(prev_close) if prev_close else None,
+            "change_pct": change_pct,
+            "trend_5d_pct": round(trend_5d_pct, 2),
+            "trend_direction": trend_direction,
+            "interpretation": interpretation,
+        }
+
+    return _safe_fetch(_fetch, "美元指数独立分析")
+
+
+# ============================================================
+# 9. COMEX 黄金/白银期货非商业持仓 (COT 报告)
+# ============================================================
+
+def fetch_cot_data() -> dict:
+    """
+    获取并解析 CFTC 持仓报告 (COT) 中 COMEX 黄金/白银的非商业持仓数据。
+
+    数据源: CFTC Legacy Futures Only 报告 (TXT)
+    URL: https://www.cftc.gov/dea/futures/deacmxsf.txt
+
+    解析 COMEX 黄金 (Code-088691) 和 COMEX 白银 (Code-084691) 的非商业持仓。
+    """
+    def _fetch():
+        url = "https://www.cftc.gov/dea/futures/deacmxsf.txt"
+        resp = requests.get(url, timeout=HTTP_TIMEOUT)
+        resp.encoding = "utf-8"
+        text = resp.text
+
+        result = {"gold": None, "silver": None, "report_date": None}
+
+        # 提取报告日期 (第一行)
+        lines = text.split("\n")
+        for line in lines[:5]:
+            line = line.strip()
+            if line and len(line) > 10:
+                # 日期格式如: "06/30/26" 或 "2026-06-30"
+                import re
+                date_match = re.search(r'(\d{2}/\d{2}/\d{2,4})', line)
+                if date_match:
+                    result["report_date"] = date_match.group(1)
+
+        # 解析黄金 (Code-088691)
+        gold_section = None
+        silver_section = None
+        for i, line in enumerate(lines):
+            if "088691" in line and "GOLD" in line.upper():
+                gold_section = i
+            if "084691" in line and "SILVER" in line.upper():
+                silver_section = i
+
+        if gold_section is not None:
+            result["gold"] = _parse_cot_commodity(lines, gold_section, "黄金")
+
+        if silver_section is not None:
+            result["silver"] = _parse_cot_commodity(lines, silver_section, "白银")
+
+        return result
+
+    return _safe_fetch(_fetch, "COT持仓报告", {"gold": None, "silver": None, "report_date": None})
+
+
+def _parse_cot_commodity(lines: list, start_idx: int, name: str) -> dict:
+    """
+    从 CFTC 文本行中解析单个商品的 COT 持仓数据。
+
+    CFTC Legacy 格式:
+    - 找到商品代码行后, 扫描到 "COMMITMENTS" 行
+    - 下一行即为数据行, 固定宽度格式
+    - 列: NON-COMMERCIAL LONG | SHORT | SPREADING | COMMERCIAL LONG | SHORT
+    """
+    import re
+
+    # 从 start_idx 开始扫描
+    for i in range(start_idx, min(start_idx + 30, len(lines))):
+        line = lines[i]
+        if "COMMITMENTS" in line.upper():
+            # 数据在下一行
+            if i + 1 < len(lines):
+                data_line = lines[i + 1]
+                # 打印调试信息
+                logger.debug(f"COT {name} data line: {data_line.strip()[:120]}")
+                # 固定宽度解析: 每列通常 10-12 个字符
+                # 尝试用正则提取数字
+                numbers = re.findall(r'[\d,]+', data_line)
+                if len(numbers) >= 5:
+                    try:
+                        noncomm_long = int(numbers[0].replace(",", ""))
+                        noncomm_short = int(numbers[1].replace(",", ""))
+                        spreading = int(numbers[2].replace(",", ""))
+                        comm_long = int(numbers[3].replace(",", ""))
+                        comm_short = int(numbers[4].replace(",", ""))
+
+                        net_position = noncomm_long - noncomm_short
+
+                        # 非商业持仓解读阈值
+                        if name == "黄金":
+                            if net_position > 250000:
+                                sentiment = "极度看多"
+                            elif net_position > 200000:
+                                sentiment = "看多偏强"
+                            elif net_position > 150000:
+                                sentiment = "中性偏多"
+                            elif net_position > 100000:
+                                sentiment = "中性"
+                            elif net_position > 50000:
+                                sentiment = "中性偏空"
+                            else:
+                                sentiment = "显著看空"
+                        else:  # 白银
+                            if net_position > 40000:
+                                sentiment = "极度看多"
+                            elif net_position > 30000:
+                                sentiment = "看多偏强"
+                            elif net_position > 20000:
+                                sentiment = "中性偏多"
+                            elif net_position > 10000:
+                                sentiment = "中性"
+                            elif net_position > 5000:
+                                sentiment = "中性偏空"
+                            else:
+                                sentiment = "显著看空"
+
+                        return {
+                            "noncomm_long": noncomm_long,
+                            "noncomm_short": noncomm_short,
+                            "net_position": net_position,
+                            "spreading": spreading,
+                            "comm_long": comm_long,
+                            "comm_short": comm_short,
+                            "sentiment": sentiment,
+                            "open_interest": int(numbers[7]) if len(numbers) > 7 else None,
+                        }
+                    except (ValueError, IndexError) as e:
+                        logger.warning(f"COT {name} 数字解析失败: {e}, raw: {numbers}")
+
+    logger.warning(f"COT {name} 未找到数据行")
+    return None
+
+
+# ============================================================
+# 10. SPDR 黄金 ETF 持仓变化
+# ============================================================
+
+def fetch_spdr_holdings() -> dict:
+    """
+    获取全球最大黄金 ETF SPDR (GLD) 的持仓变化数据。
+
+    数据源:
+    1. 优先: SPDR 官网 (https://www.spdrgoldshares.com)
+    2. 降级: 新浪财经 / 东方财富等中文财经网站
+
+    返回: 持仓量 (吨), 日变化 (吨), 总资产净值 (美元)
+    """
+    def _fetch():
+        result = {"holdings_tonnes": None, "change_tonnes": None, "nav": None, "source": "未知"}
+
+        # 方案 1: 尝试 SPDR 官网
+        try:
+            url = "https://www.spdrgoldshares.com"
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                              "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+            resp = requests.get(url, headers=headers, timeout=HTTP_TIMEOUT)
+            if resp.status_code == 200:
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(resp.text, "html.parser")
+                text = soup.get_text()
+
+                # 尝试提取持仓量 (吨)
+                import re
+                # 常见模式: "1,038.93 tonnes" 或 "1038.93 tonnes"
+                tonnes_match = re.search(r'([\d,]+\.?\d*)\s*tonnes', text, re.IGNORECASE)
+                # 或 "Total Ounces: 33,402,695"
+                ounces_match = re.search(r'([\d,]+)\s*ounces', text, re.IGNORECASE)
+
+                if tonnes_match:
+                    result["holdings_tonnes"] = float(tonnes_match.group(1).replace(",", ""))
+                    result["source"] = "SPDR 官网"
+                elif ounces_match:
+                    ounces = float(ounces_match.group(1).replace(",", ""))
+                    result["holdings_tonnes"] = round(ounces / 32150.7466, 2)  # 金衡盎司→吨
+                    result["source"] = "SPDR 官网 (盎司换算)"
+
+                # 提取 NAV
+                nav_match = re.search(r'([\d,]+\.?\d*)\s*(?:billion|B)\s*(?:USD|\$)', text, re.IGNORECASE)
+                if nav_match:
+                    result["nav"] = float(nav_match.group(1).replace(",", ""))
+                # 另一种 NAV 格式: $68.5 billion
+                nav_match2 = re.search(r'\$\s*([\d,]+\.?\d*)\s*(?:billion|B)', text, re.IGNORECASE)
+                if nav_match2 and not result["nav"]:
+                    result["nav"] = float(nav_match2.group(1).replace(",", ""))
+        except Exception as e:
+            logger.warning(f"SPDR 官网抓取失败: {e}")
+
+        # 方案 2: 如果官网失败, 尝试新浪财经或东方财富
+        if result["holdings_tonnes"] is None:
+            try:
+                # 新浪财经搜索
+                search_url = "https://search.sina.com.cn/?q=SPDR+黄金+持仓量&range=all&c=news&sort=time"
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                }
+                resp = requests.get(search_url, headers=headers, timeout=HTTP_TIMEOUT)
+                if resp.status_code == 200:
+                    from bs4 import BeautifulSoup
+                    soup = BeautifulSoup(resp.text, "html.parser")
+                    text = soup.get_text()
+                    import re
+                    tonnes_match = re.search(r'(\d+\.?\d*)\s*吨', text)
+                    if tonnes_match:
+                        result["holdings_tonnes"] = float(tonnes_match.group(1))
+                        result["source"] = "新浪财经"
+            except Exception as e:
+                logger.warning(f"新浪财经抓取失败: {e}")
+
+        if result["holdings_tonnes"] is None:
+            try:
+                # 东方财富
+                url = "https://finance.eastmoney.com/a/czqyw.html"
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                }
+                resp = requests.get(url, headers=headers, timeout=HTTP_TIMEOUT)
+                if resp.status_code == 200:
+                    from bs4 import BeautifulSoup
+                    soup = BeautifulSoup(resp.text, "html.parser")
+                    text = soup.get_text()
+                    import re
+                    tonnes_match = re.search(r'(\d+\.?\d*)\s*吨', text)
+                    if tonnes_match:
+                        result["holdings_tonnes"] = float(tonnes_match.group(1))
+                        result["source"] = "东方财富"
+            except Exception as e:
+                logger.warning(f"东方财富抓取失败: {e}")
+
+        return result if result["holdings_tonnes"] is not None else None
+
+    return _safe_fetch(_fetch, "SPDR黄金持仓")
+
+
+# ============================================================
 # 批量获取主入口
 # ============================================================
 
@@ -981,8 +1374,11 @@ def fetch_daily_bundle() -> dict:
 
     # 逐个获取 (yfinance 不支持并发 Ticker, 使用顺序请求)
     bundle["gold"] = fetch_gold_price()
+    bundle["silver"] = fetch_silver_price()
+    bundle["gold_silver_ratio"] = fetch_gold_silver_ratio()
     bundle["breakeven"] = fetch_breakeven_inflation()
     bundle["crb"] = fetch_crb_index()
+    bundle["cpi_pce"] = fetch_cpi_pce_data()  # 每日看板也展示 CPI/PCE
     bundle["qqq"] = fetch_qqq_data()
     bundle["mag7"] = fetch_mag7_data()
     bundle["vxn"] = fetch_vxn_data()
@@ -992,8 +1388,13 @@ def fetch_daily_bundle() -> dict:
     # 美元信用评估维度
     bundle["treasury"] = fetch_treasury_yields()
     bundle["dxy"] = fetch_dxy_data()
+    bundle["dxy_analysis"] = fetch_dxy_analysis()  # 独立分析
     bundle["fed_bs"] = fetch_fed_balance_sheet()
     bundle["tips"] = fetch_tips_spread()
+
+    # 贵金属持仓
+    bundle["cot"] = fetch_cot_data()
+    bundle["spdr"] = fetch_spdr_holdings()
 
     # 情绪研判
     bundle["tech_sentiment"] = analyze_tech_sentiment(
@@ -1018,15 +1419,23 @@ def fetch_monthly_bundle() -> dict:
     bundle["cpi_pce"] = fetch_cpi_pce_data()
     bundle["fomc"] = fetch_fomc_summary()
     bundle["gold"] = fetch_gold_price()  # 当月金价参考
+    bundle["silver"] = fetch_silver_price()
+    bundle["gold_silver_ratio"] = fetch_gold_silver_ratio()
     bundle["fedwatch"] = fetch_cme_fedwatch()  # 当前利率概率
 
     # 美元信用评估维度 (月度报告也纳入)
     bundle["treasury"] = fetch_treasury_yields()
     bundle["dxy"] = fetch_dxy_data()
+    bundle["dxy_analysis"] = fetch_dxy_analysis()
     bundle["fed_bs"] = fetch_fed_balance_sheet()
     bundle["tips"] = fetch_tips_spread()
+
+    # 贵金属持仓
+    bundle["cot"] = fetch_cot_data()
+    bundle["spdr"] = fetch_spdr_holdings()
+
     bundle["dollar_credit"] = analyze_dollar_credit(
-        bundle["treasury"], bundle["dxy"], bundle["fed_bs"], bundle["tips"], bundle["breakeven"]
+        bundle["treasury"], bundle["dxy"], bundle["fed_bs"], bundle["tips"], bundle.get("breakeven", {})
     )
 
     bundle["fetch_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC+8")
