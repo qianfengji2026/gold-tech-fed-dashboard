@@ -7,6 +7,7 @@ numpy>=1.26.0             # 数值计算
 requests>=2.31.0          # HTTP 请求 (备用)
 python-dotenv>=1.0.0      # 环境变量加载
 lxml>=5.1.0               # HTML/XML 解析 (备用)
+beautifulsoup4>=4.12.0    # HTML 解析 (SPDR 官网持仓抓取)
 
 # --- 市场情绪 & 利率概率 ---
 fear-greed>=0.1.0         # CNN 恐慌与贪婪指数 (CNN 内部 API)

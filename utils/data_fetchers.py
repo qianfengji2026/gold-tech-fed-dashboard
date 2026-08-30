@@ -1274,49 +1274,89 @@ def fetch_spdr_holdings() -> dict:
     1. 优先: SPDR 官网 (https://www.spdrgoldshares.com)
     2. 降级: 新浪财经 / 东方财富等中文财经网站
 
-    返回: 持仓量 (吨), 日变化 (吨), 总资产净值 (美元)
+    返回: 持仓量 (吨), 日变化 (吨), 总资产净值 (十亿美元)
     """
     def _fetch():
         result = {"holdings_tonnes": None, "change_tonnes": None, "nav": None, "source": "未知"}
 
-        # 方案 1: 尝试 SPDR 官网
+        # 方案 0 (优先): SPDR 官方每日持仓 archive CSV (含历史, 可计算日变化)
         try:
-            url = "https://www.spdrgoldshares.com"
+            csv_urls = [
+                "https://www.spdrgoldshares.com/assets/dynamic/GLD/GLD_US_archiveEN.csv",
+                "https://www.spdrgoldshares.com/media/GLD/file/GLD_US_archiveEN.csv",
+            ]
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                               "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             }
-            resp = requests.get(url, headers=headers, timeout=HTTP_TIMEOUT)
-            if resp.status_code == 200:
-                from bs4 import BeautifulSoup
-                soup = BeautifulSoup(resp.text, "html.parser")
-                text = soup.get_text()
-
-                # 尝试提取持仓量 (吨)
-                import re
-                # 常见模式: "1,038.93 tonnes" 或 "1038.93 tonnes"
-                tonnes_match = re.search(r'([\d,]+\.?\d*)\s*tonnes', text, re.IGNORECASE)
-                # 或 "Total Ounces: 33,402,695"
-                ounces_match = re.search(r'([\d,]+)\s*ounces', text, re.IGNORECASE)
-
-                if tonnes_match:
-                    result["holdings_tonnes"] = float(tonnes_match.group(1).replace(",", ""))
-                    result["source"] = "SPDR 官网"
-                elif ounces_match:
-                    ounces = float(ounces_match.group(1).replace(",", ""))
-                    result["holdings_tonnes"] = round(ounces / 32150.7466, 2)  # 金衡盎司→吨
-                    result["source"] = "SPDR 官网 (盎司换算)"
-
-                # 提取 NAV
-                nav_match = re.search(r'([\d,]+\.?\d*)\s*(?:billion|B)\s*(?:USD|\$)', text, re.IGNORECASE)
-                if nav_match:
-                    result["nav"] = float(nav_match.group(1).replace(",", ""))
-                # 另一种 NAV 格式: $68.5 billion
-                nav_match2 = re.search(r'\$\s*([\d,]+\.?\d*)\s*(?:billion|B)', text, re.IGNORECASE)
-                if nav_match2 and not result["nav"]:
-                    result["nav"] = float(nav_match2.group(1).replace(",", ""))
+            import io
+            for csv_url in csv_urls:
+                resp = requests.get(csv_url, headers=headers, timeout=HTTP_TIMEOUT)
+                if resp.status_code == 200 and resp.text.strip():
+                    df = pd.read_csv(io.StringIO(resp.text))
+                    # 列名宽松匹配: 日期 / 金衡盎司 / 吨 / NAV
+                    cols = {c.lower().strip(): c for c in df.columns}
+                    tonnes_col = next((c for k, c in cols.items() if "tonne" in k), None)
+                    nav_col = next((c for k, c in cols.items() if "nav" in k), None)
+                    if tonnes_col is None:
+                        continue
+                    df[tonnes_col] = pd.to_numeric(df[tonnes_col], errors="coerce")
+                    df = df.dropna(subset=[tonnes_col])
+                    if df.empty:
+                        continue
+                    latest_tonnes = float(df[tonnes_col].iloc[-1])
+                    result["holdings_tonnes"] = round(latest_tonnes, 2)
+                    if len(df) >= 2:
+                        result["change_tonnes"] = round(latest_tonnes - float(df[tonnes_col].iloc[-2]), 2)
+                    if nav_col is not None:
+                        nav_val = pd.to_numeric(df[nav_col], errors="coerce").iloc[-1]
+                        if pd.notna(nav_val) and nav_val > 0:
+                            # CSV中NAV为美元, 转为十亿美元
+                            result["nav"] = round(float(nav_val) / 1e9, 1) if float(nav_val) > 1e6 else round(float(nav_val), 1)
+                    result["source"] = "SPDR 官方 Archive CSV"
+                    break
         except Exception as e:
-            logger.warning(f"SPDR 官网抓取失败: {e}")
+            logger.warning(f"SPDR archive CSV 抓取失败: {e}")
+
+        # 方案 1: 尝试 SPDR 官网页面 (仅当 archive CSV 未成功时)
+        if result["holdings_tonnes"] is None:
+            try:
+                url = "https://www.spdrgoldshares.com"
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                                  "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                }
+                resp = requests.get(url, headers=headers, timeout=HTTP_TIMEOUT)
+                if resp.status_code == 200:
+                    from bs4 import BeautifulSoup
+                    soup = BeautifulSoup(resp.text, "html.parser")
+                    text = soup.get_text()
+
+                    # 尝试提取持仓量 (吨)
+                    import re
+                    # 常见模式: "1,038.93 tonnes" 或 "1038.93 tonnes"
+                    tonnes_match = re.search(r'([\d,]+\.?\d*)\s*tonnes', text, re.IGNORECASE)
+                    # 或 "Total Ounces: 33,402,695"
+                    ounces_match = re.search(r'([\d,]+)\s*ounces', text, re.IGNORECASE)
+
+                    if tonnes_match:
+                        result["holdings_tonnes"] = float(tonnes_match.group(1).replace(",", ""))
+                        result["source"] = "SPDR 官网"
+                    elif ounces_match:
+                        ounces = float(ounces_match.group(1).replace(",", ""))
+                        result["holdings_tonnes"] = round(ounces / 32150.7466, 2)  # 金衡盎司→吨
+                        result["source"] = "SPDR 官网 (盎司换算)"
+
+                    # 提取 NAV
+                    nav_match = re.search(r'([\d,]+\.?\d*)\s*(?:billion|B)\s*(?:USD|\$)', text, re.IGNORECASE)
+                    if nav_match:
+                        result["nav"] = float(nav_match.group(1).replace(",", ""))
+                    # 另一种 NAV 格式: $68.5 billion
+                    nav_match2 = re.search(r'\$\s*([\d,]+\.?\d*)\s*(?:billion|B)', text, re.IGNORECASE)
+                    if nav_match2 and not result["nav"]:
+                        result["nav"] = float(nav_match2.group(1).replace(",", ""))
+            except Exception as e:
+                logger.warning(f"SPDR 官网抓取失败: {e}")
 
         # 方案 2: 如果官网失败, 尝试新浪财经或东方财富
         if result["holdings_tonnes"] is None:

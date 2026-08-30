@@ -80,6 +80,16 @@ def _fmt_price(value, decimals=2):
     return f"${value:,.{decimals}f}"
 
 
+def _fmt_num(value, spec=",.0f", prefix="", suffix=""):
+    """安全格式化数字: None/非数值时返回 N/A, 避免渲染崩溃。"""
+    if value is None or isinstance(value, str):
+        return "N/A"
+    try:
+        return f"{prefix}{value:{spec}}{suffix}"
+    except (ValueError, TypeError):
+        return "N/A"
+
+
 def _change_class(pct, reverse=False):
     """返回 CSS 类名: up(涨红) / down(跌绿) / neutral."""
     if pct is None:
@@ -231,11 +241,11 @@ def render_daily_html(data: dict) -> str:
         crb_cls=_change_class(crb.get("change_pct") if crb else None),
         crb_change=_fmt_pct(crb.get("change_pct")) if crb else "N/A",
         cpi_date=cpi.get("date", "") if cpi else "N/A",
-        cpi_value=f"{cpi.get('value', 'N/A'):,.1f}" if cpi else "N/A",
+        cpi_value=_fmt_num(cpi.get("value") if cpi else None, ",.1f"),
         cpi_mom=_fmt_pct(cpi.get("mom_pct"), 3) if cpi else "N/A",
         cpi_yoy=_fmt_pct(cpi.get("yoy_pct"), 1) if cpi else "N/A",
         pce_date=core_pce.get("date", "") if core_pce else "N/A",
-        pce_value=f"{core_pce.get('value', 'N/A'):,.1f}" if core_pce else "N/A",
+        pce_value=_fmt_num(core_pce.get("value") if core_pce else None, ",.1f"),
         pce_mom=_fmt_pct(core_pce.get("mom_pct"), 3) if core_pce else "N/A",
         pce_yoy=_fmt_pct(core_pce.get("yoy_pct"), 1) if core_pce else "N/A",
     ))
@@ -421,7 +431,7 @@ def render_daily_html(data: dict) -> str:
         parts.append(f"""
         <div class="metric-card">
             <div class="metric-label">2Y 国债收益率</div>
-            <div class="metric-value" style="font-size:18px;">{y2.get('value', 'N/A'):.3f}%</div>
+            <div class="metric-value" style="font-size:18px;">{_fmt_num(y2.get('value'), ".3f", suffix="%")}</div>
             <div class="metric-change {_change_class(y2.get('change'))}">{_fmt_pct(y2.get('change'), 3)}</div>
         </div>
 """)
@@ -430,7 +440,7 @@ def render_daily_html(data: dict) -> str:
         parts.append(f"""
         <div class="metric-card">
             <div class="metric-label">10Y 国债收益率</div>
-            <div class="metric-value" style="font-size:18px;">{y10.get('value', 'N/A'):.3f}%</div>
+            <div class="metric-value" style="font-size:18px;">{_fmt_num(y10.get('value'), ".3f", suffix="%")}</div>
             <div class="metric-change {_change_class(y10.get('change'))}">{_fmt_pct(y10.get('change'), 3)}</div>
         </div>
 """)
@@ -439,7 +449,7 @@ def render_daily_html(data: dict) -> str:
         parts.append(f"""
         <div class="metric-card">
             <div class="metric-label">30Y 国债收益率</div>
-            <div class="metric-value" style="font-size:18px;">{y30.get('value', 'N/A'):.3f}%</div>
+            <div class="metric-value" style="font-size:18px;">{_fmt_num(y30.get('value'), ".3f", suffix="%")}</div>
             <div class="metric-change {_change_class(y30.get('change'))}">{_fmt_pct(y30.get('change'), 3)}</div>
         </div>
 """)
@@ -461,10 +471,11 @@ def render_daily_html(data: dict) -> str:
     if dxy:
         dxy_val = dxy.get("value")
         dxy_pct = dxy.get("change_pct")
+        dxy_val_str = f"{dxy_val:.2f}" if dxy_val is not None else "N/A"
         parts.append(f"""
         <div class="metric-card">
             <div class="metric-label">美元指数 (DXY)</div>
-            <div class="metric-value" style="font-size:18px;">{dxy_val:.2f if dxy_val else 'N/A'}</div>
+            <div class="metric-value" style="font-size:18px;">{dxy_val_str}</div>
             <div class="metric-change {_change_class(dxy_pct)}">{_fmt_pct(dxy_pct)}</div>
         </div>
 """)
@@ -510,6 +521,7 @@ def render_daily_html(data: dict) -> str:
         dxy_trend = dxy_analysis.get("trend_direction", "")
         dxy_trend_pct = dxy_analysis.get("trend_5d_pct")
         dxy_interp = dxy_analysis.get("interpretation", "")
+        dxy_val_str = f"{dxy_val:.2f}" if dxy_val is not None else "N/A"
         # 趋势箭头
         trend_arrow = "→"
         if dxy_trend_pct is not None:
@@ -521,7 +533,7 @@ def render_daily_html(data: dict) -> str:
     <div class="metric-row">
         <div class="metric-card">
             <div class="metric-label">最新 DXY 指数</div>
-            <div class="metric-value kpi-big">{dxy_val:.2f if dxy_val else 'N/A'}</div>
+            <div class="metric-value kpi-big">{dxy_val_str}</div>
             <div class="metric-change {_change_class(dxy_pct)}">{_fmt_pct(dxy_pct)}</div>
         </div>
         <div class="metric-card">
@@ -560,7 +572,7 @@ def render_daily_html(data: dict) -> str:
         <div class="metric-card" style="min-width:100%;">
             <div class="metric-label">金银比</div>
             <div class="metric-value kpi-big" style="color:{'#E53935' if ratio > avg20 else '#43A047'};">{ratio:.1f}</div>
-            <div class="metric-change {ratio_cls}">金价 ${gold_p:,.0f} | 银价 ${silver_p:,.2f}</div>
+            <div class="metric-change {ratio_cls}">金价 {_fmt_num(gold_p, ",.0f", prefix="$")} | 银价 {_fmt_num(silver_p, ",.2f", prefix="$")}</div>
         </div>
     </div>
     <div class="metric-row">
@@ -594,6 +606,17 @@ def render_daily_html(data: dict) -> str:
         gold_cot = cot.get("gold", {})
         silver_cot = cot.get("silver", {})
 
+        def _cot_sent_cls(s: str) -> str:
+            if "极度看多" in s:
+                return "sentiment-extreme-greed"
+            if "看多" in s:
+                return "sentiment-greed"
+            if "偏空" in s:
+                return "sentiment-fear"
+            if "看空" in s:
+                return "sentiment-panic"
+            return "sentiment-neutral"
+
         # 黄金 COT
         if gold_cot:
             gold_net = gold_cot.get("net_position")
@@ -601,20 +624,20 @@ def render_daily_html(data: dict) -> str:
             gold_oi = gold_cot.get("open_interest")
             gold_long = gold_cot.get("noncomm_long")
             gold_short = gold_cot.get("noncomm_short")
-            gold_sent_cls = _sentiment_class(gold_sentiment)
-            gold_sent_label = _sentiment_label(gold_sentiment)
+            gold_sent_cls = _cot_sent_cls(gold_sentiment)
+            gold_sent_label = gold_sentiment
 
             parts.append(f"""
     <p style="font-weight:700; margin-bottom:8px;">黄金 (COMEX, Code-088691)</p>
     <div class="metric-row">
         <div class="metric-card">
             <div class="metric-label">非商业净多仓</div>
-            <div class="metric-value kpi-big">{gold_net:,}</div>
-            <div class="metric-change">多头: {gold_long:,} | 空头: {gold_short:,}</div>
+            <div class="metric-value kpi-big">{_fmt_num(gold_net, ",")}</div>
+            <div class="metric-change">多头: {_fmt_num(gold_long, ",")} | 空头: {_fmt_num(gold_short, ",")}</div>
         </div>
         <div class="metric-card">
             <div class="metric-label">未平仓合约 (OI)</div>
-            <div class="metric-value kpi-big">{gold_oi:,}</div>
+            <div class="metric-value kpi-big">{_fmt_num(gold_oi, ",")}</div>
         </div>
         <div class="metric-card">
             <div class="metric-label">持仓情绪</div>
@@ -632,20 +655,20 @@ def render_daily_html(data: dict) -> str:
             silver_oi = silver_cot.get("open_interest")
             silver_long = silver_cot.get("noncomm_long")
             silver_short = silver_cot.get("noncomm_short")
-            silver_sent_cls = _sentiment_class(silver_sentiment)
-            silver_sent_label = _sentiment_label(silver_sentiment)
+            silver_sent_cls = _cot_sent_cls(silver_sentiment)
+            silver_sent_label = silver_sentiment
 
             parts.append(f"""
     <p style="font-weight:700; margin-top:16px; margin-bottom:8px;">白银 (COMEX, Code-084691)</p>
     <div class="metric-row">
         <div class="metric-card">
             <div class="metric-label">非商业净多仓</div>
-            <div class="metric-value kpi-big">{silver_net:,}</div>
-            <div class="metric-change">多头: {silver_long:,} | 空头: {silver_short:,}</div>
+            <div class="metric-value kpi-big">{_fmt_num(silver_net, ",")}</div>
+            <div class="metric-change">多头: {_fmt_num(silver_long, ",")} | 空头: {_fmt_num(silver_short, ",")}</div>
         </div>
         <div class="metric-card">
             <div class="metric-label">未平仓合约 (OI)</div>
-            <div class="metric-value kpi-big">{silver_oi:,}</div>
+            <div class="metric-value kpi-big">{_fmt_num(silver_oi, ",")}</div>
         </div>
         <div class="metric-card">
             <div class="metric-label">持仓情绪</div>
@@ -672,16 +695,17 @@ def render_daily_html(data: dict) -> str:
         nav = spdr.get("nav")
         source = spdr.get("source", "未知")
 
+        change_str = f"{change:+.2f} 吨" if change is not None else "N/A"
         parts.append(f"""
     <div class="metric-row">
         <div class="metric-card">
             <div class="metric-label">SPDR 黄金持仓量</div>
-            <div class="metric-value kpi-big">{holdings:,.2f}<span style="font-size:14px;"> 吨</span></div>
-            <div class="metric-change {_change_class(change) if change else 'neutral'}">{'%+.2f 吨' % change if change else 'N/A'}</div>
+            <div class="metric-value kpi-big">{_fmt_num(holdings, ",.2f")}<span style="font-size:14px;"> 吨</span></div>
+            <div class="metric-change {_change_class(change) if change is not None else 'neutral'}">{change_str}</div>
         </div>
         <div class="metric-card">
             <div class="metric-label">总资产净值 (NAV)</div>
-            <div class="metric-value kpi-big">${nav:,.1f}B</div>
+            <div class="metric-value kpi-big">{_fmt_num(nav, ",.1f", prefix="$", suffix="B")}</div>
             <div class="metric-change">数据来源: {source}</div>
         </div>
     </div>
