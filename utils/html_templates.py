@@ -770,7 +770,7 @@ def render_daily_html(data: dict) -> str:
         parts.append('<p style="color:#888;">该项数据源正在维护中</p>')
     parts.append("</div>")
 
-    # --- 第十一部分: 金银相关国际要闻 ---
+    # --- 第十一部分: 金银相关国际要闻 (图文摘要卡片) ---
     news = data.get("news")
 
     parts.append("""
@@ -778,31 +778,57 @@ def render_daily_html(data: dict) -> str:
     <div class="section-title">XI. 近期影响金银价格的国际大事要闻</div>
 """)
     if news and news.get("items"):
-        parts.append("""
-    <table class="data-table">
-        <thead>
-            <tr><th style="width:70%;">标题</th><th>来源</th><th>时间</th></tr>
-        </thead>
-        <tbody>
+        items = news["items"]
+        digest = news.get("digest", "")
+
+        # 类别主题色映射 (用于卡片左侧色条与徽章)
+        cat_colors = {
+            "central_bank": "#8e44ad",  # 紫 - 央行
+            "fed_policy": "#c0392b",    # 红 - 美联储
+            "inflation": "#d68910",     # 橙 - 通胀
+            "geopolitics": "#1f618d",   # 蓝 - 地缘
+            "market": "#7d6608",        # 金 - 行情
+        }
+
+        # 综述摘要框
+        if digest:
+            parts.append(f"""
+    <div style="background:#fdf6e3; border:1px solid #e6b422; border-radius:8px; padding:12px 16px; margin-bottom:14px;">
+        <div style="font-weight:700; color:#7d6608; margin-bottom:4px;">📌 要闻综述</div>
+        <div style="color:#444; font-size:13px; line-height:1.7;">{digest}</div>
+    </div>
 """)
-        for it in news["items"]:
+
+        # 图文卡片列表
+        parts.append("""
+    <div style="display:block;">
+""")
+        for it in items:
             title = it.get("title", "")
             link = it.get("link", "")
             source = it.get("source", "")
             published = it.get("published", "")
-            title_html = f'<a href="{link}" style="color:#1a5276; text-decoration:none;">{title}</a>' if link else title
+            cat = it.get("category", "market")
+            cat_label = it.get("category_label", "金银行情与避险")
+            icon = it.get("category_icon", "🪙")
+            color = cat_colors.get(cat, "#7d6608")
+            title_html = (
+                f'<a href="{link}" style="color:#1a1a2e; text-decoration:none; font-weight:600;">{title}</a>'
+                if link else f'<span style="font-weight:600;">{title}</span>'
+            )
             parts.append(f"""
-            <tr>
-                <td>{title_html}</td>
-                <td>{source}</td>
-                <td style="font-size:12px; color:#666;">{published}</td>
-            </tr>
+        <div style="border-left:4px solid {color}; background:#fafafa; border-radius:0 8px 8px 0; padding:10px 14px; margin-bottom:8px;">
+            <div style="margin-bottom:4px;">
+                <span style="display:inline-block; background:{color}; color:#fff; font-size:11px; border-radius:10px; padding:2px 10px;">{icon} {cat_label}</span>
+            </div>
+            <div style="font-size:14px; line-height:1.5;">{icon} {title_html}</div>
+            <div style="font-size:11px; color:#888; margin-top:4px;">{source} {('· ' + published) if published else ''}</div>
+        </div>
 """)
         parts.append("""
-        </tbody>
-    </table>
+    </div>
     <p style="text-align:center; color:#666; font-size:12px; margin-top:8px;">
-        数据来源: Google News RSS (近7天, 央行购金/美联储政策/关税/避险等金银相关事件)
+        数据来源: Google News RSS (近7天自动筛选分类, 点击标题查看原文)
     </p>
 """)
     else:

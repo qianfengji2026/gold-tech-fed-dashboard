@@ -133,7 +133,7 @@ def make_full_daily_bundle():
             },
             "interpretation": "GVZ黄金波动率16.4, 中性区间(15-20) | OVX原油波动率34.7偏高(30-40), 关注油价波动对通胀路径的影响",
         },
-        # XI: 国际要闻
+        # XI: 国际要闻 (图文卡片)
         "news": {
             "items": [
                 {
@@ -141,15 +141,22 @@ def make_full_daily_bundle():
                     "link": "https://example.com/news/1",
                     "source": "Reuters",
                     "published": "Fri, 25 Sep 2026 08:30:00 GMT",
+                    "category": "fed_policy",
+                    "category_label": "美联储与利率政策",
+                    "category_icon": "🏦",
                 },
                 {
                     "title": "中央银行持续增持黄金储备 <script>alert('xss')</script>",
                     "link": "",
                     "source": "新华网",
                     "published": "",
+                    "category": "central_bank",
+                    "category_label": "央行动态/购金",
+                    "category_icon": "🏛️",
                 },
             ],
             "count": 2,
+            "digest": "近7天共筛选出 2 条金银相关国际要闻, 焦点集中在: 美联储与利率政策(1条)、央行动态/购金(1条) — 利率预期变化是金银短期定价主线, 关注讲话与点阵图信号",
         },
         "tech_sentiment": "科技股情绪: 乐观偏多。Mag7 普涨, VXN 回落, 恐慌贪婪指数 71 (Greed)。",
         "fetch_time": "2026-08-30 05:02:33 UTC+8",
@@ -191,7 +198,21 @@ def make_volatility_partial():
         "gvz": {"value": 21.30, "prev_close": 20.10, "change_pct": 5.97},
         "interpretation": "GVZ黄金波动率21.3, 偏高(20-25), 黄金短期波动加剧",
     }
-    b["news"] = {"items": [], "count": 0}
+    b["news"] = {"items": [], "count": 0, "digest": ""}
+    return b
+
+
+def make_news_legacy_fields():
+    """要闻字段为旧版结构 (无 category/digest) 的兼容场景。"""
+    b = make_full_daily_bundle()
+    b["news"] = {
+        "items": [
+            {"title": "Gold hits record high on safe haven demand",
+             "link": "https://example.com/news/3", "source": "Bloomberg",
+             "published": "Thu, 24 Sep 2026 10:00:00 GMT"},
+        ],
+        "count": 1,
+    }
     return b
 
 
@@ -268,6 +289,7 @@ if __name__ == "__main__":
         ("每日-SPDR缺NAV", lambda: render_daily_html(make_spdr_partial())),
         ("每日-COT字段稀疏", lambda: render_daily_html(make_cot_sparse())),
         ("每日-波动率部分缺失+要闻空", lambda: render_daily_html(make_volatility_partial())),
+        ("每日-要闻旧版字段兼容", lambda: render_daily_html(make_news_legacy_fields())),
         ("月度-完整数据", lambda: render_monthly_html(make_monthly_bundle())),
     ]
 

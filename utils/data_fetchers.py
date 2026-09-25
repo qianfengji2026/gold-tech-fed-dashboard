@@ -1523,6 +1523,61 @@ _NEWS_KEYWORDS = (
     "黄金", "白银", "央行", "美联储", "降息", "加息", "通胀", "关税", "避险",
 )
 
+# 要闻分类规则: (类别key, 中文标签, 图标, 匹配关键词) 按顺序优先匹配
+_NEWS_CATEGORIES = (
+    ("central_bank", "央行动态/购金", "🏛️",
+     ("central bank", "cb gold", "gold buying", "gold reserves", "pboc",
+      "央行", "购金", "增持黄金", "储备")),
+    ("fed_policy", "美联储与利率政策", "🏦",
+     ("fed", "fomc", "rate cut", "rate hike", "powell", "monetary policy",
+      "美联储", "降息", "加息", "货币政策")),
+    ("inflation", "通胀与经济数据", "📊",
+     ("inflation", "cpi", "pce", "payroll", "jobs report", "gdp", "recession",
+      "通胀", "非农", "就业")),
+    ("geopolitics", "关税与地缘政治", "🌐",
+     ("tariff", "war", "sanction", "conflict", "geopolit", "election",
+      "关税", "地缘", "制裁", "冲突")),
+    ("market", "金银行情与避险", "🪙",
+     ("gold", "silver", "bullion", "safe haven", "rally", "surge", "plunge",
+      "record high", "黄金", "白银", "避险", "新高")),
+)
+
+
+def _classify_news(title: str) -> tuple:
+    """按标题关键词将要闻归类, 返回 (类别key, 中文标签, 图标)。默认归入行情避险。"""
+    low = title.lower()
+    for key, label, icon, kws in _NEWS_CATEGORIES:
+        if any(k in low for k in kws):
+            return key, label, icon
+    return "market", "金银行情与避险", "🪙"
+
+
+def _build_news_digest(items: list) -> str:
+    """根据分类统计自动生成要闻综述段落。"""
+    if not items:
+        return ""
+    cat_count = {}
+    for it in items:
+        cat_count[it.get("category_label", "其他")] = cat_count.get(it.get("category_label", "其他"), 0) + 1
+    # 按数量降序
+    ranked = sorted(cat_count.items(), key=lambda x: x[1], reverse=True)
+    parts = [f"近7天共筛选出 {len(items)} 条金银相关国际要闻, 焦点集中在: "]
+    parts.append("、".join(f"{label}({cnt}条)" for label, cnt in ranked[:3]))
+    # 对焦点主题补充解读提示
+    top_cat = ranked[0][0] if ranked else ""
+    hints = {
+        "美联储与利率政策": " — 利率预期变化是金银短期定价主线, 关注讲话与点阵图信号",
+        "央行动态/购金": " — 央行购金是金价中长期支撑, 关注官方储备数据",
+        "通胀与经济数据": " — 数据强弱直接影响降息路径, 金银波动或放大",
+        "关税与地缘政治": " — 避险情绪升温利好金银, 关注事态升级",
+        "金银行情与避险": " — 行情类消息居多, 注意技术位与资金流向",
+    }
+    for hint_key, hint in hints.items():
+        if top_cat.startswith(hint_key[:4]):
+            parts.append(hint)
+            break
+    return "".join(parts)
+
 
 def fetch_gold_news(max_items: int = 8, days: int = 7) -> dict:
     """
@@ -1566,13 +1621,21 @@ def fetch_gold_news(max_items: int = 8, days: int = 7) -> dict:
             for item in root.iter("item"):
                 title = (item.findtext("title") or "").strip()
                 link = (item.findtext("link") or "").strip()
-                if not title or title in seen_titles:
+                src_el = item.find("source")
+                source = (src_el.text or "").strip() if src_el is not None and src_el.text else ""
+                # 先去除 Google News 的 " - 来源" 后缀, 再去重
+                # (同一标题不同来源只保留一条)
+                if " - " in title and source:
+                    head, _, tail = title.rpartition(" - ")
+                    if tail.strip().lower() == source.strip().lower():
+                        title = head.strip()
+                if not title or title.lower() in seen_titles:
                     continue
                 # 标题小写关键词过滤
                 low = title.lower()
                 if not any(k in low for k in _NEWS_KEYWORDS):
                     continue
-                seen_titles.add(title)
+                seen_titles.add(title.lower())
                 pub_str = (item.findtext("pubDate") or "").strip()
                 pub_dt = None
                 try:
@@ -1580,8 +1643,6 @@ def fetch_gold_news(max_items: int = 8, days: int = 7) -> dict:
                         pub_dt = parsedate_to_datetime(pub_str)
                 except Exception:
                     pass
-                src_el = item.find("source")
-                source = (src_el.text or "").strip() if src_el is not None and src_el.text else ""
                 items.append({
                     "title": title,
                     "link": link,
@@ -1592,13 +1653,6 @@ def fetch_gold_news(max_items: int = 8, days: int = 7) -> dict:
 
         if not items:
             return None
-
-        # 去除 Google News 的 " - 来源" 后缀, 保留纯标题
-        for it in items:
-            if " - " in it["title"] and it["source"]:
-                head, _, tail = it["title"].rpartition(" - ")
-                if tail.strip().lower() == it["source"].strip().lower():
-                    it["title"] = head.strip()
 
         # 时间过滤 (带时区的转 UTC 比较); 无时间的项保留
         def _to_utc(dt):
@@ -1620,17 +1674,24 @@ def fetch_gold_news(max_items: int = 8, days: int = 7) -> dict:
             reverse=True,
         )[:max_items]
 
+        # 分类并生成综述
+        out_items = []
+        for it in final:
+            cat_key, cat_label, cat_icon = _classify_news(it["title"])
+            out_items.append({
+                "title": it["title"],
+                "link": it["link"],
+                "source": it["source"],
+                "published": it["published"],
+                "category": cat_key,
+                "category_label": cat_label,
+                "category_icon": cat_icon,
+            })
+
         return {
-            "items": [
-                {
-                    "title": it["title"],
-                    "link": it["link"],
-                    "source": it["source"],
-                    "published": it["published"],
-                }
-                for it in final
-            ],
-            "count": len(final),
+            "items": out_items,
+            "count": len(out_items),
+            "digest": _build_news_digest(out_items),
         }
 
     return _safe_fetch(_fetch, "金银国际要闻")
