@@ -133,7 +133,7 @@ def make_full_daily_bundle():
             },
             "interpretation": "GVZ黄金波动率16.4, 中性区间(15-20) | OVX原油波动率34.7偏高(30-40), 关注油价波动对通胀路径的影响",
         },
-        # XI: 国际要闻 (图文卡片)
+        # XI: 国际要闻 (纯文字核心提炼)
         "news": {
             "items": [
                 {
@@ -144,19 +144,27 @@ def make_full_daily_bundle():
                     "category": "fed_policy",
                     "category_label": "美联储与利率政策",
                     "category_icon": "🏦",
+                    "core_title": "Fed officials signal caution on rate cuts as inflation cools",
+                    "direction": "bearish",
+                    "direction_label": "利空金银",
+                    "key_figures": "",
                 },
                 {
-                    "title": "中央银行持续增持黄金储备 <script>alert('xss')</script>",
+                    "title": "中央银行持续增持黄金储备",
                     "link": "",
                     "source": "新华网",
                     "published": "",
                     "category": "central_bank",
                     "category_label": "央行动态/购金",
                     "category_icon": "🏛️",
+                    "core_title": "中央银行持续增持黄金储备",
+                    "direction": "bullish",
+                    "direction_label": "利好金银",
+                    "key_figures": "48吨",
                 },
             ],
             "count": 2,
-            "digest": "近7天共筛选出 2 条金银相关国际要闻, 焦点集中在: 美联储与利率政策(1条)、央行动态/购金(1条) — 利率预期变化是金银短期定价主线, 关注讲话与点阵图信号",
+            "digest": "近7天共筛选出 2 条金银相关国际要闻, 焦点集中在: 美联储与利率政策(1条)、央行动态/购金(1条) | 消息面多空比: 利好1 vs 利空1, 多空消息均衡 — 利率预期变化是金银短期定价主线, 关注讲话与点阵图信号",
         },
         "tech_sentiment": "科技股情绪: 乐观偏多。Mag7 普涨, VXN 回落, 恐慌贪婪指数 71 (Greed)。",
         "fetch_time": "2026-08-30 05:02:33 UTC+8",

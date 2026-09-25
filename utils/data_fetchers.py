@@ -1543,17 +1543,97 @@ _NEWS_CATEGORIES = (
 )
 
 
+def _kw_match(low_title: str, keywords: tuple) -> bool:
+    """
+    关键词匹配: 英文关键词用词边界 (避免 'towards' 匹配到 'war' 之类的误判),
+    中文/复合关键词用普通子串匹配。
+    """
+    import re
+    for k in keywords:
+        if k.isascii() and k.strip():
+            if re.search(r"\b" + re.escape(k) + r"\b", low_title):
+                return True
+        elif k in low_title:
+            return True
+    return False
+
+
 def _classify_news(title: str) -> tuple:
     """按标题关键词将要闻归类, 返回 (类别key, 中文标签, 图标)。默认归入行情避险。"""
     low = title.lower()
     for key, label, icon, kws in _NEWS_CATEGORIES:
-        if any(k in low for k in kws):
+        if _kw_match(low, kws):
             return key, label, icon
     return "market", "金银行情与避险", "🪙"
 
 
+# 低价值新闻过滤: 地方金价挂牌/零售报价类 (无宏观信息量)
+_NEWS_JUNK_PATTERNS = (
+    "rate today in", "check rates", "check rate", "in delhi", "in karnataka",
+    "in mumbai", "in chennai", "in hyderabad", "1 kg", "10 gram", "24k", "22k",
+    "per tola", "jewellery price", "今日金价", "金店", "首饰价",
+)
+
+# 方向判断: (方向key, 对金银的含义, 标签) — 对金银价格的影响
+_NEWS_BULLISH_KWS = (
+    "surge", "soar", "rally", "jump", "climb", "record high", "all-time high",
+    "hits record", "rises", "rallying", "buying", "strong demand", "safe haven bid",
+    "cut rates", "rate cut", "dovish", "easing", "stimulus", "war", "conflict",
+    "escalate", "tariff", "大涨", "新高", "飙升", "避险升温",
+)
+_NEWS_BEARISH_KWS = (
+    "plunge", "fall", "falls", "decline", "declines", "decrease", "decreases",
+    "drop", "drops", "slide", "slump", "worst week", "loss", "loses", "weaker",
+    "headwind", "strong dollar", "hawkish", "rate hike", "higher for longer",
+    "yields above", "profit-taking", "pull back", "pulls back", "weigh",
+    "下跌", "暴跌", "走弱", "鹰派",
+)
+
+
+def _news_core(title: str) -> dict:
+    """
+    从新闻标题提炼核心要点 (纯规则, 生产环境无LLM可用):
+    - 清理标题杂质 (日期前缀/媒体地名/促销词)
+    - 判断方向: 利好/利空/中性 (对金银价格的影响)
+    - 提取关键数字 (百分比/美元价位)
+    返回 {"core_title", "direction", "direction_label", "key_figures"}
+    """
+    import re
+    core = title.strip()
+
+    # 去掉常见日期前缀/后缀杂质: "Gold price today September 25:", "Gold (XAU/USD) ..."
+    core = re.sub(r"(?i)\b(today|september|october|november|december|january|february|march|april|may|june|july|august)\s+\d{1,2}(st|nd|rd|th)?\s*:?\s*", " ", core)
+    core = re.sub(r"(?i)\b\d{1,2}(st|nd|rd|th)\s+(september|october|november|december|january|february|march|april|may|june|july|august)\s*\d{4}\b", " ", core)
+    core = re.sub(r"(?i)\b(price )?forecast\b\s*:?\s*", " ", core)
+    core = re.sub(r"\s+", " ", core).strip(" :-")
+    if not core:
+        core = title.strip()
+
+    # 方向判断 (利好优先级低于利空时并存, 取更强信号)
+    low = title.lower()
+    bull = sum(1 for k in _NEWS_BULLISH_KWS if _kw_match(low, (k,)))
+    bear = sum(1 for k in _NEWS_BEARISH_KWS if _kw_match(low, (k,)))
+    if bull > bear:
+        direction, direction_label = "bullish", "利好金银"
+    elif bear > bull:
+        direction, direction_label = "bearish", "利空金银"
+    else:
+        direction, direction_label = "neutral", "中性/关注"
+
+    # 关键数字: 百分比 与 美元价位
+    figs = re.findall(r"\d+\.?\d*\s*%|\$\s?\d[\d,]*\.?\d*", title)
+    key_figures = " / ".join(figs[:3]) if figs else ""
+
+    return {
+        "core_title": core,
+        "direction": direction,
+        "direction_label": direction_label,
+        "key_figures": key_figures,
+    }
+
+
 def _build_news_digest(items: list) -> str:
-    """根据分类统计自动生成要闻综述段落。"""
+    """根据分类统计与多空方向自动生成要闻综述段落。"""
     if not items:
         return ""
     cat_count = {}
@@ -1563,6 +1643,17 @@ def _build_news_digest(items: list) -> str:
     ranked = sorted(cat_count.items(), key=lambda x: x[1], reverse=True)
     parts = [f"近7天共筛选出 {len(items)} 条金银相关国际要闻, 焦点集中在: "]
     parts.append("、".join(f"{label}({cnt}条)" for label, cnt in ranked[:3]))
+    # 多空统计
+    bull = sum(1 for it in items if it.get("direction") == "bullish")
+    bear = sum(1 for it in items if it.get("direction") == "bearish")
+    if bull or bear:
+        if bull > bear:
+            tone = "整体消息面偏多"
+        elif bear > bull:
+            tone = "整体消息面偏空"
+        else:
+            tone = "多空消息均衡"
+        parts.append(f" | 消息面多空比: 利好{bull} vs 利空{bear}, {tone}")
     # 对焦点主题补充解读提示
     top_cat = ranked[0][0] if ranked else ""
     hints = {
@@ -1633,7 +1724,10 @@ def fetch_gold_news(max_items: int = 8, days: int = 7) -> dict:
                     continue
                 # 标题小写关键词过滤
                 low = title.lower()
-                if not any(k in low for k in _NEWS_KEYWORDS):
+                if not _kw_match(low, _NEWS_KEYWORDS):
+                    continue
+                # 低价值新闻过滤 (地方金价挂牌/零售报价类)
+                if _kw_match(low, _NEWS_JUNK_PATTERNS):
                     continue
                 seen_titles.add(title.lower())
                 pub_str = (item.findtext("pubDate") or "").strip()
@@ -1674,10 +1768,11 @@ def fetch_gold_news(max_items: int = 8, days: int = 7) -> dict:
             reverse=True,
         )[:max_items]
 
-        # 分类并生成综述
+        # 分类 + 核心提炼 + 生成综述
         out_items = []
         for it in final:
             cat_key, cat_label, cat_icon = _classify_news(it["title"])
+            core = _news_core(it["title"])
             out_items.append({
                 "title": it["title"],
                 "link": it["link"],
@@ -1686,6 +1781,10 @@ def fetch_gold_news(max_items: int = 8, days: int = 7) -> dict:
                 "category": cat_key,
                 "category_label": cat_label,
                 "category_icon": cat_icon,
+                "core_title": core["core_title"],
+                "direction": core["direction"],
+                "direction_label": core["direction_label"],
+                "key_figures": core["key_figures"],
             })
 
         return {
