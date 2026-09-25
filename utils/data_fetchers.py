@@ -16,7 +16,7 @@
 import json
 import time
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -1405,6 +1405,238 @@ def fetch_spdr_holdings() -> dict:
 
 
 # ============================================================
+# 10. 贵金属/工业金属波动率指标 (GVZ / VXSLV / 铜波动率)
+# ============================================================
+
+def fetch_volatility_indices() -> dict:
+    """
+    获取贵金属/原油与工业金属波动率指标。
+
+    - GVZ:   CBOE 黄金 ETF 期权隐含波动率指数 (yfinance: ^GVZ)
+    - VXSLV: CBOE 白银 ETF 期权隐含波动率指数 (yfinance: ^VXSLV)
+    - OVX:   CBOE 原油 ETF 期权隐含波动率指数 (yfinance: ^OVX)
+    - LME铜波动率: 无公开实时 ticker, 用 COMEX 铜期货 (HG=F) 21日年化已实现
+      波动率近似, 并在返回中标注计算方法。
+
+    返回:
+    {
+        "gvz":         {"value", "prev_close", "change_pct"},
+        "vxslv":       {"value", "prev_close", "change_pct"},
+        "ovx":         {"value", "prev_close", "change_pct"},
+        "copper_vol":  {"value", "method"},
+        "interpretation": "..."
+    }
+    """
+    def _fetch():
+        result = {}
+
+        # --- GVZ / VXSLV / OVX ---
+        for key, ticker, name in (
+            ("gvz", "^GVZ", "GVZ"),
+            ("vxslv", "^VXSLV", "VXSLV"),
+            ("ovx", "^OVX", "OVX"),
+        ):
+            try:
+                hist = yf.Ticker(ticker).history(period="1mo")
+                if hist.empty or len(hist) < 2:
+                    continue
+                current = float(hist["Close"].iloc[-1])
+                prev = float(hist["Close"].iloc[-2])
+                change_pct = (current - prev) / prev * 100
+                result[key] = {
+                    "value": round(current, 2),
+                    "prev_close": round(prev, 2),
+                    "change_pct": round(change_pct, 2),
+                }
+            except Exception as e:
+                logger.warning(f"{name} 波动率指数获取失败: {e}")
+
+        # --- LME 铜波动率 (HG=F 已实现波动率近似) ---
+        try:
+            hist = yf.Ticker("HG=F").history(period="3mo")
+            if not hist.empty:
+                closes = hist["Close"].dropna()
+                if len(closes) >= 22:
+                    rets = closes.pct_change().dropna().tail(21)
+                    if len(rets) >= 10:
+                        rv = float(np.std(rets, ddof=1) * np.sqrt(252) * 100)
+                        result["copper_vol"] = {
+                            "value": round(rv, 2),
+                            "method": "COMEX铜期货(HG=F) 21日年化已实现波动率 (LME铜波动率近似)",
+                        }
+        except Exception as e:
+            logger.warning(f"铜波动率计算失败: {e}")
+
+        if not result:
+            return None
+
+        # --- 综合解读 ---
+        interp = []
+        gvz_val = result.get("gvz", {}).get("value")
+        if gvz_val:
+            if gvz_val > 25:
+                interp.append(f"GVZ黄金波动率{gvz_val:.1f}, 处于高位(>25), 黄金价格短期波动风险显著放大")
+            elif gvz_val > 20:
+                interp.append(f"GVZ黄金波动率{gvz_val:.1f}, 偏高(20-25), 黄金短期波动加剧")
+            elif gvz_val > 15:
+                interp.append(f"GVZ黄金波动率{gvz_val:.1f}, 中性区间(15-20)")
+            else:
+                interp.append(f"GVZ黄金波动率{gvz_val:.1f}, 低位(<15), 黄金走势平稳")
+        vxslv_val = result.get("vxslv", {}).get("value")
+        if gvz_val and vxslv_val:
+            if vxslv_val > gvz_val * 1.3:
+                interp.append(f"VXSLV白银波动率({vxslv_val:.1f})显著高于GVZ({gvz_val:.1f}), 白银投机波动更剧烈, 注意仓位控制")
+        ovx_val = result.get("ovx", {}).get("value")
+        if ovx_val:
+            if ovx_val > 40:
+                interp.append(f"OVX原油波动率{ovx_val:.1f}处于高位(>40), 能源市场剧烈波动, 通胀预期与避险需求或推升金银")
+            elif ovx_val > 30:
+                interp.append(f"OVX原油波动率{ovx_val:.1f}偏高(30-40), 关注油价波动对通胀路径的影响")
+            else:
+                interp.append(f"OVX原油波动率{ovx_val:.1f}处于常态区间")
+        cu_val = result.get("copper_vol", {}).get("value")
+        if cu_val:
+            if cu_val > 25:
+                interp.append(f"铜波动率{cu_val:.1f}偏高, 工业金属市场定价宏观不确定性上升")
+            else:
+                interp.append(f"铜波动率{cu_val:.1f}处于常态区间")
+        result["interpretation"] = " | ".join(interp) if interp else ""
+        return result
+
+    return _safe_fetch(_fetch, "贵金属波动率指标")
+
+
+# ============================================================
+# 11. 金银相关国际要闻 (Google News RSS)
+# ============================================================
+
+_NEWS_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+
+# 关键词: 任何一条命中即认为与金银宏观相关
+_NEWS_KEYWORDS = (
+    "gold", "silver", "bullion", "precious metal",
+    "central bank", "fed ", "fomc", "rate cut", "rate hike", "inflation",
+    "tariff", "ecb", "bank of japan", "recession", "safe haven",
+    "黄金", "白银", "央行", "美联储", "降息", "加息", "通胀", "关税", "避险",
+)
+
+
+def fetch_gold_news(max_items: int = 8, days: int = 7) -> dict:
+    """
+    抓取近期影响黄金/白银价格的国际要闻。
+
+    使用 Google News RSS 搜索 (无需 API Key):
+    - "gold OR silver price" 行情面
+    - "central bank gold buying" 央行购金/货币政策面
+
+    过滤: 近 N 天 + 标题含相关关键词; 去重后按时间倒序取前 max_items 条。
+    若全部早于时间窗口, 则保留最新 max_items 条兜底。
+    """
+    def _fetch():
+        import urllib.parse
+        import xml.etree.ElementTree as ET
+        from email.utils import parsedate_to_datetime
+
+        queries = [
+            "gold price OR silver price OR bullion",
+            "central bank gold buying OR fed rate gold",
+        ]
+        seen_titles = set()
+        items = []
+        cutoff = datetime.utcnow() - timedelta(days=days)
+
+        for q in queries:
+            url = (
+                "https://news.google.com/rss/search?q="
+                + urllib.parse.quote(q) + "&hl=en-US&gl=US&ceid=US:en"
+            )
+            try:
+                resp = requests.get(url, headers={"User-Agent": _NEWS_UA},
+                                    timeout=HTTP_TIMEOUT)
+                if resp.status_code != 200:
+                    continue
+                root = ET.fromstring(resp.content)
+            except Exception as e:
+                logger.warning(f"要闻RSS抓取失败 ({q}): {e}")
+                continue
+
+            for item in root.iter("item"):
+                title = (item.findtext("title") or "").strip()
+                link = (item.findtext("link") or "").strip()
+                if not title or title in seen_titles:
+                    continue
+                # 标题小写关键词过滤
+                low = title.lower()
+                if not any(k in low for k in _NEWS_KEYWORDS):
+                    continue
+                seen_titles.add(title)
+                pub_str = (item.findtext("pubDate") or "").strip()
+                pub_dt = None
+                try:
+                    if pub_str:
+                        pub_dt = parsedate_to_datetime(pub_str)
+                except Exception:
+                    pass
+                src_el = item.find("source")
+                source = (src_el.text or "").strip() if src_el is not None and src_el.text else ""
+                items.append({
+                    "title": title,
+                    "link": link,
+                    "source": source,
+                    "published": pub_str,
+                    "published_dt": pub_dt,
+                })
+
+        if not items:
+            return None
+
+        # 去除 Google News 的 " - 来源" 后缀, 保留纯标题
+        for it in items:
+            if " - " in it["title"] and it["source"]:
+                head, _, tail = it["title"].rpartition(" - ")
+                if tail.strip().lower() == it["source"].strip().lower():
+                    it["title"] = head.strip()
+
+        # 时间过滤 (带时区的转 UTC 比较); 无时间的项保留
+        def _to_utc(dt):
+            if dt is None:
+                return None
+            try:
+                return dt.astimezone(timezone.utc).replace(tzinfo=None)
+            except Exception:
+                return dt.replace(tzinfo=None)
+
+        recent = [it for it in items
+                  if it["published_dt"] is None
+                  or (_to_utc(it["published_dt"]) or cutoff) >= cutoff]
+        final = recent if recent else items
+        # 排序: 有时间的按时间倒序在前, 无时间垫底
+        final = sorted(
+            final,
+            key=lambda x: _to_utc(x["published_dt"]) or cutoff - timedelta(days=99),
+            reverse=True,
+        )[:max_items]
+
+        return {
+            "items": [
+                {
+                    "title": it["title"],
+                    "link": it["link"],
+                    "source": it["source"],
+                    "published": it["published"],
+                }
+                for it in final
+            ],
+            "count": len(final),
+        }
+
+    return _safe_fetch(_fetch, "金银国际要闻")
+
+
+# ============================================================
 # 批量获取主入口
 # ============================================================
 
@@ -1435,6 +1667,10 @@ def fetch_daily_bundle() -> dict:
     # 贵金属持仓
     bundle["cot"] = fetch_cot_data()
     bundle["spdr"] = fetch_spdr_holdings()
+
+    # 波动率指标与国际要闻
+    bundle["volatility"] = fetch_volatility_indices()
+    bundle["news"] = fetch_gold_news()
 
     # 情绪研判
     bundle["tech_sentiment"] = analyze_tech_sentiment(

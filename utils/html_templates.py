@@ -178,7 +178,7 @@ def render_daily_html(data: dict) -> str:
 <div class="container">
 
 <div class="header">
-    <h1>每日黄金通胀预期、美股科技股情绪、美联储降息概率、美元信用评估与贵金属持仓看板</h1>
+    <h1>每日黄金通胀预期、美股科技股情绪、美联储降息概率、美元信用评估、贵金属持仓、波动率与国际要闻看板</h1>
     <div class="subtitle">Daily Gold · Inflation · Tech Sentiment · Fed Policy · Dollar Credit · Precious Metals</div>
     <div class="date-badge">{today}</div>
 </div>
@@ -711,6 +711,98 @@ def render_daily_html(data: dict) -> str:
     </div>
     <p style="text-align:center; color:#666; font-size:12px; margin-top:8px;">
         SPDR 持仓变化反映全球最大黄金 ETF 的资金流向, 是衡量黄金投资需求的重要指标。
+    </p>
+""")
+    else:
+        parts.append('<p style="color:#888;">该项数据源正在维护中</p>')
+    parts.append("</div>")
+
+    # --- 第十部分: 贵金属/原油波动率指标 ---
+    volatility = data.get("volatility")
+
+    parts.append("""
+<div class="section">
+    <div class="section-title">X. 贵金属 & 原油波动率指标 (GVZ / VXSLV / OVX / 铜波动率)</div>
+""")
+    if volatility:
+        gvz = volatility.get("gvz")
+        vxslv = volatility.get("vxslv")
+        ovx = volatility.get("ovx")
+        copper_vol = volatility.get("copper_vol")
+        vol_interp = volatility.get("interpretation", "")
+
+        parts.append("""
+    <div class="metric-row">
+""")
+        for item in (
+            ("GVZ 黄金波动率", gvz, "涨=风险放大 跌=趋于平稳"),
+            ("VXSLV 白银波动率", vxslv, "涨=风险放大 跌=趋于平稳"),
+            ("OVX 原油波动率", ovx, "涨=能源动荡 跌=平稳"),
+        ):
+            label, obj, hint = item
+            if not obj:
+                continue
+            v = obj.get("value")
+            chg = obj.get("change_pct")
+            parts.append(f"""
+        <div class="metric-card">
+            <div class="metric-label">{label}</div>
+            <div class="metric-value kpi-big">{_fmt_num(v, ".2f")}</div>
+            <div class="metric-change {_change_class(chg, reverse=True)}">{_fmt_pct(chg)} <small>({hint})</small></div>
+        </div>
+""")
+        if copper_vol and copper_vol.get("value") is not None:
+            parts.append(f"""
+        <div class="metric-card">
+            <div class="metric-label">LME 铜波动率 (近似)</div>
+            <div class="metric-value kpi-big">{_fmt_num(copper_vol.get("value"), ".2f")}%</div>
+            <div class="metric-change">21日年化已实现波动率 (COMEX HG=F)</div>
+        </div>
+""")
+        parts.append("""
+    </div>
+""")
+        if vol_interp:
+            parts.append(f"""
+    <p style="text-align:center; color:#666; font-size:12px; margin-top:8px;">{vol_interp}</p>
+""")
+    else:
+        parts.append('<p style="color:#888;">该项数据源正在维护中</p>')
+    parts.append("</div>")
+
+    # --- 第十一部分: 金银相关国际要闻 ---
+    news = data.get("news")
+
+    parts.append("""
+<div class="section">
+    <div class="section-title">XI. 近期影响金银价格的国际大事要闻</div>
+""")
+    if news and news.get("items"):
+        parts.append("""
+    <table class="data-table">
+        <thead>
+            <tr><th style="width:70%;">标题</th><th>来源</th><th>时间</th></tr>
+        </thead>
+        <tbody>
+""")
+        for it in news["items"]:
+            title = it.get("title", "")
+            link = it.get("link", "")
+            source = it.get("source", "")
+            published = it.get("published", "")
+            title_html = f'<a href="{link}" style="color:#1a5276; text-decoration:none;">{title}</a>' if link else title
+            parts.append(f"""
+            <tr>
+                <td>{title_html}</td>
+                <td>{source}</td>
+                <td style="font-size:12px; color:#666;">{published}</td>
+            </tr>
+""")
+        parts.append("""
+        </tbody>
+    </table>
+    <p style="text-align:center; color:#666; font-size:12px; margin-top:8px;">
+        数据来源: Google News RSS (近7天, 央行购金/美联储政策/关税/避险等金银相关事件)
     </p>
 """)
     else:

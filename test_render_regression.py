@@ -122,6 +122,35 @@ def make_full_daily_bundle():
             "nav": 88.9,
             "source": "SPDR 官方 Archive CSV",
         },
+        # X: 波动率指标
+        "volatility": {
+            "gvz": {"value": 16.42, "prev_close": 15.98, "change_pct": 2.75},
+            "vxslv": {"value": 23.15, "prev_close": 24.10, "change_pct": -3.94},
+            "ovx": {"value": 34.68, "prev_close": 33.20, "change_pct": 4.46},
+            "copper_vol": {
+                "value": 18.72,
+                "method": "COMEX铜期货(HG=F) 21日年化已实现波动率 (LME铜波动率近似)",
+            },
+            "interpretation": "GVZ黄金波动率16.4, 中性区间(15-20) | OVX原油波动率34.7偏高(30-40), 关注油价波动对通胀路径的影响",
+        },
+        # XI: 国际要闻
+        "news": {
+            "items": [
+                {
+                    "title": "Fed officials signal caution on rate cuts as inflation cools",
+                    "link": "https://example.com/news/1",
+                    "source": "Reuters",
+                    "published": "Fri, 25 Sep 2026 08:30:00 GMT",
+                },
+                {
+                    "title": "中央银行持续增持黄金储备 <script>alert('xss')</script>",
+                    "link": "",
+                    "source": "新华网",
+                    "published": "",
+                },
+            ],
+            "count": 2,
+        },
         "tech_sentiment": "科技股情绪: 乐观偏多。Mag7 普涨, VXN 回落, 恐慌贪婪指数 71 (Greed)。",
         "fetch_time": "2026-08-30 05:02:33 UTC+8",
     }
@@ -148,9 +177,22 @@ def make_partial_daily_bundle():
         "cot": None,
         "spdr": None,
         "gold_silver_ratio": None,
+        "volatility": None,
+        "news": None,
         "tech_sentiment": "",
         "fetch_time": "2026-08-30 05:02:33 UTC+8",
     }
+
+
+def make_volatility_partial():
+    """波动率指标部分缺失的边界场景 (只有 GVZ, 无 VXSLV/OVX/铜)。"""
+    b = make_full_daily_bundle()
+    b["volatility"] = {
+        "gvz": {"value": 21.30, "prev_close": 20.10, "change_pct": 5.97},
+        "interpretation": "GVZ黄金波动率21.3, 偏高(20-25), 黄金短期波动加剧",
+    }
+    b["news"] = {"items": [], "count": 0}
+    return b
 
 
 def make_spdr_partial():
@@ -225,6 +267,7 @@ if __name__ == "__main__":
         ("每日-全None(降级场景)", lambda: render_daily_html(make_partial_daily_bundle())),
         ("每日-SPDR缺NAV", lambda: render_daily_html(make_spdr_partial())),
         ("每日-COT字段稀疏", lambda: render_daily_html(make_cot_sparse())),
+        ("每日-波动率部分缺失+要闻空", lambda: render_daily_html(make_volatility_partial())),
         ("月度-完整数据", lambda: render_monthly_html(make_monthly_bundle())),
     ]
 
