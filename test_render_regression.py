@@ -34,6 +34,15 @@ def check(name, fn):
 def make_full_daily_bundle():
     """模拟生产环境: 所有数据源都成功返回的完整 bundle。"""
     return {
+        # 顶部: 人民币汇率
+        "cny_rate": {
+            "rate": 7.1236,
+            "prev_close": 7.1089,
+            "change": 0.0147,
+            "change_pct": 0.207,
+            "trend_label": "美元走强 · 人民币贬值",
+            "source": "CNY=X",
+        },
         # I: 黄金与通胀
         "gold": {
             "GC=F": {"price": 2650.4, "change_pct": 0.85, "prev_close": 2628.1},
@@ -174,6 +183,7 @@ def make_full_daily_bundle():
 def make_partial_daily_bundle():
     """模拟恶劣场景: 数据源大面积失败 (大量 None/缺失字段)。"""
     return {
+        "cny_rate": None,
         "gold": {},
         "breakeven": None,
         "crb": None,
@@ -207,6 +217,13 @@ def make_volatility_partial():
         "interpretation": "GVZ黄金波动率21.3, 偏高(20-25), 黄金短期波动加剧",
     }
     b["news"] = {"items": [], "count": 0, "digest": ""}
+    return b
+
+
+def make_cny_rate_partial():
+    """汇率只有报价、缺变动字段的边界场景。"""
+    b = make_full_daily_bundle()
+    b["cny_rate"] = {"rate": 7.0512, "change": None, "change_pct": None, "trend_label": "", "source": "CNY=X"}
     return b
 
 
@@ -297,6 +314,7 @@ if __name__ == "__main__":
         ("每日-SPDR缺NAV", lambda: render_daily_html(make_spdr_partial())),
         ("每日-COT字段稀疏", lambda: render_daily_html(make_cot_sparse())),
         ("每日-波动率部分缺失+要闻空", lambda: render_daily_html(make_volatility_partial())),
+        ("每日-汇率缺变动字段", lambda: render_daily_html(make_cny_rate_partial())),
         ("每日-要闻旧版字段兼容", lambda: render_daily_html(make_news_legacy_fields())),
         ("月度-完整数据", lambda: render_monthly_html(make_monthly_bundle())),
     ]

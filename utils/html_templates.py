@@ -184,6 +184,40 @@ def render_daily_html(data: dict) -> str:
 </div>
 """)
 
+    # --- 顶部: 当日人民币汇率 (置于报告最前) ---
+    cny_rate = data.get("cny_rate")
+    if cny_rate and cny_rate.get("rate") is not None:
+        cny_val = cny_rate.get("rate")
+        cny_chg = cny_rate.get("change")
+        cny_pct = cny_rate.get("change_pct")
+        cny_trend = cny_rate.get("trend_label", "")
+        # 汇率上行=美元走强/人民币贬值 (数值涨=红, 跌=绿, 遵循本项目配色惯例)
+        cny_cls = _change_class(cny_pct)
+        cny_arrow = "▲" if (cny_chg or 0) > 0 else ("▼" if (cny_chg or 0) < 0 else "◆")
+        cny_chg_str = f"{cny_chg:+.4f}" if cny_chg is not None else "N/A"
+        parts.append(f"""
+<div class="section" style="background:linear-gradient(135deg,#fff8e1 0%,#fff 100%); border:1px solid #e6b422;">
+    <div style="text-align:center; padding:6px 0;">
+        <div style="font-size:13px; color:#7d6608; font-weight:700; letter-spacing:1px;">💱 当日最新汇率</div>
+        <div style="font-size:32px; font-weight:800; color:#1a1a2e; margin:6px 0 2px;">
+            1 USD = {_fmt_num(cny_val, ".4f")} CNY
+        </div>
+        <div style="font-size:15px; font-weight:700; color:{'#E53935' if cny_cls == 'up' else ('#43A047' if cny_cls == 'down' else '#888')};">
+            {cny_arrow} {cny_chg_str} ({_fmt_pct(cny_pct)})
+        </div>
+        <div style="font-size:12px; color:#666; margin-top:4px;">{cny_trend} · 数据来源: Yahoo Finance ({cny_rate.get('source', 'CNY=X')})</div>
+    </div>
+</div>
+""")
+    else:
+        parts.append("""
+<div class="section" style="background:#fafafa; border:1px dashed #ccc;">
+    <div style="text-align:center; color:#888; padding:6px 0; font-size:13px;">
+        💱 当日人民币汇率数据暂不可用 (数据源维护中)
+    </div>
+</div>
+""")
+
     # --- 第一部分: 黄金与通胀 ---
     cpi_pce = data.get("cpi_pce", {})
     cpi = cpi_pce.get("cpi") if cpi_pce else None

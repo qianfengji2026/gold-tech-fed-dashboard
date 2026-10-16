@@ -1797,6 +1797,58 @@ def fetch_gold_news(max_items: int = 8, days: int = 7) -> dict:
 
 
 # ============================================================
+# 12. 美元兑人民币汇率 (USD/CNY)
+# ============================================================
+
+def fetch_cny_rate() -> dict:
+    """
+    获取最新美元兑人民币即期汇率 (USD/CNY)。
+
+    数据源: Yahoo Finance 外汇 ticker (CNY=X 即 USD/CNY 报价), 备选 USDCNY=X。
+
+    返回:
+    {
+        "rate":        最新汇率 (1美元 = ? 人民币)
+        "prev_close":  前一交易日收盘汇率
+        "change":      绝对变动
+        "change_pct":  变动百分比
+        "trend_label": "美元走强 · 人民币贬值" 等
+        "source":      数据 ticker
+    }
+    """
+    def _fetch():
+        for ticker in ("CNY=X", "USDCNY=X"):
+            try:
+                hist = yf.Ticker(ticker).history(period="5d")
+                if hist.empty or len(hist) < 2:
+                    continue
+                cur = float(hist["Close"].iloc[-1])
+                prev = float(hist["Close"].iloc[-2])
+                change = cur - prev
+                change_pct = round(change / prev * 100, 3)
+                if change > 0:
+                    trend_label = "美元走强 · 人民币贬值"
+                elif change < 0:
+                    trend_label = "美元走弱 · 人民币升值"
+                else:
+                    trend_label = "汇率持平"
+                return {
+                    "rate": round(cur, 4),
+                    "prev_close": round(prev, 4),
+                    "change": round(change, 4),
+                    "change_pct": change_pct,
+                    "trend_label": trend_label,
+                    "source": ticker,
+                }
+            except Exception as e:
+                logger.warning(f"汇率 {ticker} 获取失败: {e}")
+                continue
+        return None
+
+    return _safe_fetch(_fetch, "美元兑人民币汇率")
+
+
+# ============================================================
 # 批量获取主入口
 # ============================================================
 
@@ -1805,6 +1857,7 @@ def fetch_daily_bundle() -> dict:
     bundle = {}
 
     # 逐个获取 (yfinance 不支持并发 Ticker, 使用顺序请求)
+    bundle["cny_rate"] = fetch_cny_rate()  # 当日人民币汇率 (置于报告首位)
     bundle["gold"] = fetch_gold_price()
     bundle["silver"] = fetch_silver_price()
     bundle["gold_silver_ratio"] = fetch_gold_silver_ratio()
